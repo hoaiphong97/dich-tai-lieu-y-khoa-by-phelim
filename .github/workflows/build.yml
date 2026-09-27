@@ -1,0 +1,87 @@
+name: Build bộ cài
+
+# Chạy khi push tag dạng v0.1.0 (tạo Release kèm bộ cài), hoặc bấm tay trong tab Actions.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pymupdf fastapi uvicorn python-multipart httpx markdown pytest
+      - run: python -m pytest -q tests
+
+  windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: python packaging/make_icons.py
+      - run: pyinstaller packaging/dichyk.spec --noconfirm
+      - name: Tạo bộ cài .exe (Inno Setup)
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+          $version = "${{ github.ref_type == 'tag' && github.ref_name || 'v0.1.0' }}".TrimStart("v")
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" packaging\windows.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: dist/DichYKhoa-Setup-*.exe
+
+  macos:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14        # Apple Silicon (M1/M2/M3/M4)
+            arch: arm64
+          - runner: macos-15-intel  # Mac chip Intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: python packaging/make_icons.py
+      - run: pyinstaller packaging/dichyk.spec --noconfirm
+      - name: Tạo file .dmg
+        run: |
+          VERSION="${{ github.ref_type == 'tag' && github.ref_name || 'v0.1.0' }}"
+          VERSION="${VERSION#v}"
+          mkdir -p dmg && cp -R dist/DichYKhoa.app dmg/ && ln -s /Applications dmg/Applications
+          hdiutil create -volname "Dich Y Khoa" -srcfolder dmg -ov -format UDZO "dist/DichYKhoa-${VERSION}-macos-${{ matrix.arch }}.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: dist/*.dmg
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

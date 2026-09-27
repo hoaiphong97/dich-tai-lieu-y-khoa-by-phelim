@@ -1,0 +1,142 @@
+# Bộ thuật ngữ khởi đầu — TẤT CẢ ở trạng thái draft, cần người có chuyên môn duyệt.
+# Cột: en | vi | variants (ngăn bằng |) | abbr | domain | ambiguous (1 = đa nghĩa, chỉ gợi ý) | status | note
+en	vi	variants	abbr	domain	ambiguous	status	note
+acute	cấp tính			general	0	draft
+adrenal gland	tuyến thượng thận			anatomy	0	draft
+adverse effect	tác dụng không mong muốn	adverse event		pharmacology	0	draft
+alveolar bone	xương ổ răng			dental	0	draft
+alveolar process	mỏm xương ổ răng			dental	0	draft
+alveolus	phế nang			anatomy	1	draft	Nha khoa: ổ răng (tooth socket)
+analgesic	thuốc giảm đau			pharmacology	0	draft
+anemia	thiếu máu	anaemia		clinical	0	draft
+antibiotic	kháng sinh			pharmacology	0	draft
+aorta	động mạch chủ			anatomy	0	draft
+articular disc	đĩa khớp	articular disk		anatomy	0	draft
+atrial fibrillation	rung nhĩ		AF	clinical	0	draft
+benign	lành tính			clinical	0	draft
+biopsy	sinh thiết			clinical	0	draft
+blood pressure	huyết áp			clinical	0	draft
+brainstem	thân não	brain stem		anatomy	0	draft
+bronchus	phế quản			anatomy	0	draft
+bruxism	tật nghiến răng			dental	0	draft
+canine	răng nanh			dental	1	draft	Ngoài nha khoa có thể là "thuộc loài chó"
+cartilage	sụn			anatomy	0	draft
+centric occlusion	khớp cắn trung tâm			dental	0	draft
+centric relation	tương quan trung tâm			dental	0	draft
+cerebellum	tiểu não			anatomy	0	draft
+cerebral cortex	vỏ não			anatomy	0	draft
+chronic	mạn tính			general	0	draft
+clavicle	xương đòn			anatomy	0	draft
+colon	đại tràng			anatomy	0	draft
+computed tomography	chụp cắt lớp vi tính	computerized tomography	CT	imaging	0	draft
+condyle	lồi cầu			anatomy	0	draft
+contraindication	chống chỉ định			pharmacology	0	draft
+coronary artery	động mạch vành			anatomy	0	draft
+coronoid process	mỏm vẹt			anatomy	0	draft
+crown	thân răng			dental	1	draft	Phục hình: mão răng
+dental arch	cung răng			dental	0	draft
+dental caries	sâu răng			dental	0	draft
+dental implant	implant nha khoa			dental	0	draft
+dentin	ngà răng	dentine		dental	0	draft
+diabetes mellitus	đái tháo đường			clinical	0	draft
+diagnosis	chẩn đoán			general	0	draft
+diaphragm	cơ hoành			anatomy	1	draft	Dụng cụ tránh thai: màng ngăn âm đạo
+differential diagnosis	chẩn đoán phân biệt			general	0	draft
+duodenum	tá tràng			anatomy	0	draft
+edema	phù	oedema		clinical	0	draft
+electrocardiogram	điện tâm đồ	electrocardiography	ECG	imaging	0	draft
+enamel	men răng			dental	0	draft
+endocardium	nội tâm mạc			anatomy	0	draft
+esophagus	thực quản	oesophagus		anatomy	0	draft
+etiology	căn nguyên	aetiology		general	0	draft
+femur	xương đùi			anatomy	0	draft
+fibula	xương mác			anatomy	0	draft
+fracture	gãy xương			clinical	1	draft	Vật liệu: nứt, vỡ
+gallbladder	túi mật			anatomy	0	draft
+gingiva	lợi			dental	0	draft	Miền Nam thường dùng "nướu"
+gingivitis	viêm lợi			dental	0	draft	Miền Nam thường dùng "viêm nướu"
+heart failure	suy tim			clinical	0	draft
+heart rate	nhịp tim			clinical	0	draft
+hemoglobin	huyết sắc tố	haemoglobin	Hb	laboratory	0	draft
+hippocampus	hồi hải mã			anatomy	0	draft
+humerus	xương cánh tay			anatomy	0	draft
+hypertension	tăng huyết áp			clinical	0	draft
+hypotension	hạ huyết áp			clinical	0	draft
+ileum	hồi tràng			anatomy	0	draft
+incidence	tỷ lệ mới mắc			epidemiology	0	draft
+incisor	răng cửa			dental	0	draft
+inflammation	viêm			general	0	draft
+intercuspal position	vị trí lồng múi tối đa			dental	0	draft
+jejunum	hỗng tràng			anatomy	0	draft
+lateral pterygoid muscle	cơ chân bướm ngoài	lateral pterygoid		anatomy	0	draft
+left ventricle	tâm thất trái			anatomy	0	draft
+ligament	dây chằng			anatomy	0	draft
+lymph node	hạch bạch huyết			anatomy	0	draft
+magnetic resonance imaging	chụp cộng hưởng từ		MRI	imaging	0	draft
+malignant	ác tính			clinical	0	draft
+malocclusion	sai khớp cắn			dental	0	draft
+mandible	xương hàm dưới			anatomy	0	draft
+masseter	cơ cắn	masseter muscle		anatomy	0	draft
+masticatory muscles	các cơ nhai	muscles of mastication		anatomy	0	draft
+masticatory system	hệ thống nhai			dental	0	draft
+maxilla	xương hàm trên			anatomy	0	draft
+medial pterygoid muscle	cơ chân bướm trong	medial pterygoid		anatomy	0	draft
+metastasis	di căn			oncology	0	draft
+molar	răng hàm lớn			dental	0	draft	Miền Nam thường dùng "răng cối lớn"
+mortality	tỷ lệ tử vong	mortality rate		epidemiology	0	draft
+myocardial infarction	nhồi máu cơ tim		MI	clinical	0	draft
+myocardium	cơ tim			anatomy	0	draft
+nonsteroidal anti-inflammatory drug	thuốc chống viêm không steroid	non-steroidal anti-inflammatory drug	NSAID	pharmacology	0	draft
+occlusion	khớp cắn			dental	1	draft	Mạch máu: tắc
+orthodontics	chỉnh nha			dental	0	draft
+overbite	độ cắn phủ	vertical overlap		dental	0	draft
+overjet	độ cắn chìa	horizontal overlap		dental	0	draft
+pancreas	tụy			anatomy	0	draft
+pathogenesis	bệnh sinh			general	0	draft
+pelvis	khung chậu			anatomy	1	draft	Thận: bể thận (renal pelvis)
+pericardium	màng ngoài tim			anatomy	0	draft
+periodontal ligament	dây chằng nha chu		PDL	dental	0	draft
+periodontitis	viêm nha chu			dental	0	draft
+pituitary gland	tuyến yên			anatomy	0	draft
+platelet	tiểu cầu			laboratory	0	draft
+pleura	màng phổi			anatomy	0	draft
+pneumonia	viêm phổi			clinical	0	draft
+premolar	răng hàm nhỏ	bicuspid		dental	0	draft	Miền Nam thường dùng "răng cối nhỏ"
+prevalence	tỷ lệ hiện mắc			epidemiology	0	draft
+prognosis	tiên lượng			general	0	draft
+prosthodontics	phục hình răng			dental	0	draft
+pulmonary artery	động mạch phổi			anatomy	0	draft
+pulp	tủy răng	dental pulp		dental	1	draft	Ngoài nha khoa: tủy (lách, ngón)
+radius	xương quay			anatomy	1	draft	Hình học: bán kính
+randomized controlled trial	thử nghiệm ngẫu nhiên có đối chứng	randomised controlled trial	RCT	research	0	draft
+red blood cell	hồng cầu	erythrocyte	RBC	laboratory	0	draft
+right atrium	tâm nhĩ phải			anatomy	0	draft
+root canal	ống tủy			dental	0	draft
+scapula	xương bả vai			anatomy	0	draft
+sepsis	nhiễm khuẩn huyết			clinical	0	draft
+side effect	tác dụng phụ			pharmacology	0	draft
+skull	hộp sọ			anatomy	0	draft
+spinal cord	tủy sống			anatomy	0	draft
+spleen	lách			anatomy	0	draft
+sternum	xương ức			anatomy	0	draft
+stroke	đột quỵ			clinical	1	draft	Sinh lý tim: thể tích nhát bóp (stroke volume)
+symptom	triệu chứng			general	0	draft
+synovial membrane	màng hoạt dịch			anatomy	0	draft
+syndrome	hội chứng			general	0	draft
+temporalis	cơ thái dương	temporalis muscle|temporal muscle		anatomy	0	draft
+temporomandibular disorders	rối loạn thái dương hàm	temporomandibular disorder	TMD	dental	0	draft
+temporomandibular joint	khớp thái dương hàm		TMJ	anatomy	0	draft
+tendon	gân			anatomy	0	draft
+thyroid gland	tuyến giáp			anatomy	0	draft
+tibia	xương chày			anatomy	0	draft
+trachea	khí quản			anatomy	0	draft
+tuberculosis	lao		TB	clinical	0	draft
+tumor	khối u	tumour		oncology	0	draft
+type 2 diabetes	đái tháo đường típ 2	type 2 diabetes mellitus	T2DM	clinical	0	draft
+ulna	xương trụ			anatomy	0	draft
+ultrasound	siêu âm	ultrasonography		imaging	0	draft
+ureter	niệu quản			anatomy	0	draft
+urethra	niệu đạo			anatomy	0	draft
+urinary bladder	bàng quang			anatomy	0	draft
+vertebra	đốt sống			anatomy	0	draft
+white blood cell	bạch cầu	leukocyte|leucocyte	WBC	laboratory	0	draft
