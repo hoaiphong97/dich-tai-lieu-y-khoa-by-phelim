@@ -105,15 +105,14 @@ packaging/       PyInstaller spec, bộ cài Windows (Inno Setup), icon
 
 ### Phát hành bộ cài
 
-Bộ cài được build tự động trên GitHub Actions, vì bản Windows phải build trên Windows và bản macOS phải build trên macOS:
+Bộ cài được build tự động trên GitHub Actions, vì bản Windows phải build trên Windows và bản macOS phải build trên macOS.
 
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
+1. Tăng `APP_VERSION` trong `dichyk/paths.py` (ví dụ `0.1.0` → `0.2.0`).
+2. Commit và push lên `main`.
 
-Workflow chạy test, build `.exe` (Windows) và `.dmg` (macOS Apple Silicon + Intel), rồi tạo Release kèm các file.
-Muốn build thử mà không tạo Release: vào tab **Actions** → **Build bộ cài** → **Run workflow**, rồi tải file trong mục Artifacts.
+Nếu phiên bản đó chưa có Release, workflow sẽ chạy test, build `.exe` (Windows) và `.dmg` (macOS Apple Silicon + Intel), rồi tự tạo tag `vX.Y.Z` và Release kèm các file.
+Push mà không đổi phiên bản thì workflow chỉ chạy test.
+Muốn build thử mà không phát hành: vào tab **Actions** → **Build bộ cài** → **Run workflow**, rồi tải file trong mục Artifacts.
 
 ### Giấy phép
 

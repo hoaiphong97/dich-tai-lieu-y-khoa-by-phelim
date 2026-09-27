@@ -1,15 +1,37 @@
 name: Build bộ cài
 
-# Chạy khi push tag dạng v0.1.0 (tạo Release kèm bộ cài), hoặc bấm tay trong tab Actions.
+# Push lên main: luôn chạy test. Nếu phiên bản trong dichyk/paths.py (APP_VERSION) chưa có
+# Release thì build bộ cài Windows + macOS, tự tạo tag vX.Y.Z và Release kèm các file.
+# Muốn phát hành bản mới: tăng APP_VERSION rồi push.
+# Bấm tay (Actions → Run workflow): build bộ cài để thử, tải trong mục Artifacts.
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      release: ${{ steps.v.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(python3 -c "import re; print(re.search(r'APP_VERSION = \"(.+?)\"', open('dichyk/paths.py', encoding='utf-8').read()).group(1))")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if gh release view "v$VERSION" > /dev/null 2>&1; then
+            echo "release=false" >> "$GITHUB_OUTPUT"; echo "Đã có Release v$VERSION — chỉ chạy test."
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"; echo "Chưa có Release v$VERSION — sẽ build và phát hành."
+          fi
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -21,7 +43,8 @@ jobs:
       - run: python -m pytest -q tests
 
   windows:
-    needs: test
+    needs: [version, test]
+    if: needs.version.outputs.release == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,15 +58,15 @@ jobs:
         shell: pwsh
         run: |
           if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
-          $version = "${{ github.ref_type == 'tag' && github.ref_name || 'v0.1.0' }}".TrimStart("v")
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" packaging\windows.iss
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ needs.version.outputs.version }}" packaging\windows.iss
       - uses: actions/upload-artifact@v4
         with:
           name: windows-installer
           path: dist/DichYKhoa-Setup-*.exe
 
   macos:
-    needs: test
+    needs: [version, test]
+    if: needs.version.outputs.release == 'true' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -63,18 +86,17 @@ jobs:
       - run: pyinstaller packaging/dichyk.spec --noconfirm
       - name: Tạo file .dmg
         run: |
-          VERSION="${{ github.ref_type == 'tag' && github.ref_name || 'v0.1.0' }}"
-          VERSION="${VERSION#v}"
           mkdir -p dmg && cp -R dist/DichYKhoa.app dmg/ && ln -s /Applications dmg/Applications
-          hdiutil create -volname "Dich Y Khoa" -srcfolder dmg -ov -format UDZO "dist/DichYKhoa-${VERSION}-macos-${{ matrix.arch }}.dmg"
+          hdiutil create -volname "Dich Y Khoa" -srcfolder dmg -ov -format UDZO \
+            "dist/DichYKhoa-${{ needs.version.outputs.version }}-macos-${{ matrix.arch }}.dmg"
       - uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.arch }}
           path: dist/*.dmg
 
   release:
-    if: github.ref_type == 'tag'
-    needs: [windows, macos]
+    needs: [version, windows, macos]
+    if: needs.version.outputs.release == 'true' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -83,5 +105,22 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ needs.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: Dịch Y Khoa ${{ needs.version.outputs.version }}
           files: artifacts/*
+          body: |
+            ## Tải về
+
+            | Hệ điều hành | File |
+            |---|---|
+            | Windows 10/11 (64-bit) | `DichYKhoa-Setup-${{ needs.version.outputs.version }}.exe` |
+            | macOS chip Apple (M1–M4) | `DichYKhoa-${{ needs.version.outputs.version }}-macos-arm64.dmg` |
+            | macOS chip Intel | `DichYKhoa-${{ needs.version.outputs.version }}-macos-x86_64.dmg` |
+
+            **Lần đầu mở app** (bộ cài chưa ký số):
+            - Windows: SmartScreen → **More info** → **Run anyway**.
+            - macOS: chuột phải vào app → **Open** → **Open** (hoặc `xattr -cr /Applications/DichYKhoa.app`).
+
+            Sau khi cài: vào **Cài đặt** để chọn nguồn dịch (khuyên dùng Ollama, miễn phí). Xem hướng dẫn trong README.
           generate_release_notes: true

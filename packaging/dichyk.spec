@@ -8,7 +8,8 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_submodules
 
 ROOT = Path(SPECPATH).parent
-APP_VERSION = "0.1.0"
+import re
+APP_VERSION = re.search(r'APP_VERSION = "(.+?)"', (ROOT / "dichyk" / "paths.py").read_text(encoding="utf-8")).group(1)
 ICON_WIN = str(ROOT / "packaging" / "icon.ico")
 ICON_MAC = str(ROOT / "packaging" / "icon.icns")
 
