@@ -44,8 +44,8 @@ def main() -> None:
     try:
         img.save(HERE / "icon.icns")
     except Exception as exc:  # Pillow cũ có thể không ghi được ICNS
-        print("Bỏ qua icon.icns:", exc)
-    print("Đã tạo icon trong", HERE)
+        print("Skip icon.icns:", exc)
+    print("Icons written to", HERE)  # ASCII: console Windows (cp1252) không in được chữ có dấu
 
 
 if __name__ == "__main__":
