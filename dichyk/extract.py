@@ -10,6 +10,7 @@ Mục tiêu là văn bản đọc được theo đúng thứ tự, không phải
 from __future__ import annotations
 
 import re
+import threading
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +25,10 @@ CAPTION_RE = re.compile(
 TERMINAL_RE = re.compile(r"[.!?:;…”\")\]]\s*$")
 PAGE_NUMBER_RE = re.compile(r"^(page\s*)?[\divxlcdm]{1,6}$", re.IGNORECASE)
 MARGIN = 0.08  # 8% trên/dưới trang được coi là lề (header/footer)
+
+# PyMuPDF không hỗ trợ dùng từ nhiều luồng cùng lúc (kể cả với các tài liệu khác nhau).
+# Mọi thao tác PyMuPDF trong app đi qua khoá này; chỉ giữ khoá trong từng bước ngắn.
+MUPDF_LOCK = threading.RLock()
 
 
 @dataclass
@@ -54,7 +59,7 @@ class PdfInfo:
 # --------------------------------------------------------------------------- #
 
 def pdf_info(path: str | Path) -> PdfInfo:
-    with pymupdf.open(path) as doc:
+    with MUPDF_LOCK, pymupdf.open(path) as doc:
         toc_raw = doc.get_toc(simple=True)
         toc = []
         for i, (level, title, start) in enumerate(toc_raw):
@@ -220,32 +225,39 @@ def extract_blocks(
 ) -> list[Block]:
     raw_pages: list[tuple[int, list[_Raw], list[Block], float]] = []
     flags = (pymupdf.TEXTFLAGS_DICT & ~pymupdf.TEXT_PRESERVE_IMAGES) | pymupdf.TEXT_DEHYPHENATE
-    with pymupdf.open(path) as doc:
+    with MUPDF_LOCK:
+        doc = pymupdf.open(path)
+    try:
         for count, page_no in enumerate(pages, 1):
             if cancelled and cancelled():
                 break
-            page = doc[page_no - 1]
-            tables, table_rects = _extract_tables(page, page_no) if detect_tables else ([], [])
-            figures = _extract_figures(page, page_no, table_rects)
-            raws = []
-            for block in page.get_text("dict", flags=flags)["blocks"]:
-                if block.get("type") != 0:
-                    continue
-                rect = pymupdf.Rect(block["bbox"])
-                area = rect.get_area()
-                if area and any((rect & t).get_area() > 0.5 * area for t in table_rects):
-                    continue
-                raw = _block_from_dict(block, page_no)
-                if raw:
-                    raws.append(raw)
-            if not raws and not tables and page.get_images():
-                # Trang scan: chưa đọc được chữ, nhưng vẫn giữ cả trang như một hình.
-                r = page.rect
-                figures = [Block("figure", "scan", page_no, parts=[[page_no, r.x0, r.y0, r.x1, r.y1, 0, 0, 0, 0]])]
-            raw_pages.append((page_no, _reading_order(raws, page.rect.width), tables + figures, page.rect.height))
+            with MUPDF_LOCK:  # giữ khoá từng trang, để giao diện vẫn mở trang khác được
+                page = doc[page_no - 1]
+                tables, table_rects = _extract_tables(page, page_no) if detect_tables else ([], [])
+                figures = _extract_figures(page, page_no, table_rects)
+                raws = []
+                for block in page.get_text("dict", flags=flags)["blocks"]:
+                    if block.get("type") != 0:
+                        continue
+                    rect = pymupdf.Rect(block["bbox"])
+                    area = rect.get_area()
+                    if area and any((rect & t).get_area() > 0.5 * area for t in table_rects):
+                        continue
+                    raw = _block_from_dict(block, page_no)
+                    if raw:
+                        raws.append(raw)
+                if not raws and not tables and page.get_images():
+                    # Trang scan: chưa đọc được chữ, nhưng vẫn giữ cả trang như một hình.
+                    r = page.rect
+                    figures = [Block("figure", "scan", page_no, parts=[[page_no, r.x0, r.y0, r.x1, r.y1, 0, 0, 0, 0]])]
+                raw_pages.append((page_no, _reading_order(raws, page.rect.width), tables + figures, page.rect.height))
             if progress:
                 progress(count, len(pages))
-        margin_keys = _margin_keys(doc, pages)
+        with MUPDF_LOCK:
+            margin_keys = _margin_keys(doc, pages)
+    finally:
+        with MUPDF_LOCK:
+            doc.close()
 
     body_size = _body_font_size(raw_pages)
     heading_levels = _heading_levels(raw_pages, body_size)

@@ -56,6 +56,7 @@ DEFAULTS = {
     "output_pdf": True,  # PDF giữ bố cục, có hình
     "output_md": True,  # Markdown kèm thư mục hình
     "pdf_interleave": False,  # PDF xen kẽ trang gốc và trang dịch
+    "agent_parts": 1,  # chế độ agent: chia việc cho bao nhiêu agent dịch song song
     "output_dir": "",
 }
 
@@ -89,7 +90,7 @@ def save(update: dict) -> dict:
             if isinstance(default, bool):
                 value = bool(value)
             elif isinstance(default, int):
-                value = max(1, min(8, int(value))) if key == "workers" else int(value)
+                value = max(1, min(8, int(value))) if key in ("workers", "agent_parts") else int(value)
             elif isinstance(default, float):
                 value = max(0.0, min(1.5, float(value)))
             else:

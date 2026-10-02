@@ -92,3 +92,63 @@ def test_markdown_with_figures(tmp_path):
     )
     assert re.search(r"!\[Hình — trang 3\]\(hinh-book/tr3-1\.png\)", md)
     assert pdfout.slug("Sách Giải Phẫu (tập 2)") == "sach-giai-phau-tap-2"
+
+
+def test_render_pdf_in_small_batches_keeps_pages_and_toc(tmp_path):
+    pdf = build(str(tmp_path / "book.pdf"))
+    pages = [1, 2, 3]
+    blocks = extract.extract_blocks(pdf, pages)
+    segments = pipeline.build_segments(blocks, None, bilingual=False)
+    pipeline.translate_segments(segments, FakeEngine(), None)
+    out = tmp_path / "batched.pdf"
+    pdfout.render_pdf(pdf, pages, blocks, segments, out, batch_size=1)
+    doc = pymupdf.open(out)
+    assert doc.page_count == 3
+    assert "Occlusal" not in doc[2].get_text() and "từ" in doc[2].get_text()
+    assert [t[1] for t in doc.get_toc()] == ["Chapter 1 Functional Anatomy", "Occlusal Forces"]
+    assert [t[2] for t in doc.get_toc()] == [1, 3]
+    assert not (tmp_path / "batched.pdf.parts").exists()  # file tạm đã dọn
+
+
+def test_part_renderer_renders_batches_in_order(tmp_path, monkeypatch):
+    from dichyk import jobs, pdfout as po
+
+    monkeypatch.setenv("DICHYK_DATA", str(tmp_path / "data"))
+    monkeypatch.setattr(po, "BATCH_PAGES", 1)
+    pdf = build(str(tmp_path / "book.pdf"))
+    pages = [1, 2, 3]
+    blocks = extract.extract_blocks(pdf, pages)
+    segments = pipeline.build_segments(blocks, None, bilingual=False)
+    job = jobs.Job(type="pdf", file_path=pdf, file_name="book.pdf", page_list=pages)
+    renderer = jobs.PartRenderer(job, blocks, segments, pages, interleave=False)
+    assert len(renderer.batches) == 3
+    engine = FakeEngine()
+    rendered_after = []
+    for s in segments:  # dịch tuần tự, theo dõi lúc nào mỗi lô được đặt chữ
+        pipeline.translate_one(engine, None, s)
+        if renderer.mark(s):
+            rendered_after.append((s.id, job.pdf_pages_ready))
+    renderer.flush(force=True)
+    assert job.pdf_pages_ready == 3 and len(renderer.parts) == 3
+    # trang 1 xong trước khi dịch hết (đoạn vắt sang trang 2 phải chờ), các lô theo đúng thứ tự
+    assert rendered_after[0][0] < len(segments) - 1
+    assert [p for _, p in rendered_after] == sorted(p for _, p in rendered_after)
+    pdfout.merge_parts(renderer.parts, tmp_path / "m.pdf", source=pdf, pages=pages)
+    assert pymupdf.open(tmp_path / "m.pdf").page_count == 3
+
+
+def test_agent_task_split_and_load(tmp_path):
+    blocks = pipeline.text_to_blocks("First paragraph here.\n\nSecond one.\n\nThird one.\n\nFourth one.")
+    segs = pipeline.build_segments(blocks, None, bilingual=False)
+    tasks = pipeline.export_agent_task(tmp_path, segs, source="x", scope="y", parts=2)
+    assert [t.name for t in tasks] == ["AGENT_TASK_1.md", "AGENT_TASK_2.md"]
+    assert "segments_2.jsonl" in tasks[1].read_text(encoding="utf-8")
+    assert "phần 2/2" in tasks[1].read_text(encoding="utf-8")
+    assert len((tmp_path / "segments_1.jsonl").read_text(encoding="utf-8").splitlines()) == 2
+    (tmp_path / "translations_1.jsonl").write_text('{"id": 0, "dst": "Đoạn một."}\n', encoding="utf-8")
+    (tmp_path / "translations_2.jsonl").write_text('{"id": 3, "dst": "Đoạn bốn."}\n', encoding="utf-8")
+    assert pipeline.load_agent_translations(tmp_path, segs) == 2
+    assert segs[0].dst == "Đoạn một." and segs[3].dst == "Đoạn bốn."
+    # xuất lại với 1 phần: file phần cũ bị dọn, bản dịch giữ lại
+    pipeline.export_agent_task(tmp_path, segs, source="x", scope="y", parts=1)
+    assert not (tmp_path / "segments_1.jsonl").exists() and (tmp_path / "translations_1.jsonl").exists()

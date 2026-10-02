@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from . import extract, paths, pdfout
 from . import settings as settings_mod
 from .engines import EngineError, make_engine
-from .jobs import JobManager
+from .jobs import ACTIVE, JobManager
 from .prompts import SYSTEM, build_user
 
 app = FastAPI(title=paths.APP_TITLE, docs_url=None, redoc_url=None)
@@ -282,7 +282,17 @@ def job_page(job_id: str, side: str = "dst", i: int = 0):
         png = pdfout.render_page_png(job.file_path, pages[i] - 1)
     else:
         interleave = bool(job.options.get("pdf_interleave", settings_mod.load()["pdf_interleave"]))
-        png = pdfout.render_page_png(_output(job_id, "pdf"), 2 * i + 1 if interleave else i)
+        final = Path(job.outputs.get("pdf", "") or "_")
+        if job.status not in ACTIVE and final.is_file():
+            png = pdfout.render_page_png(final, 2 * i + 1 if interleave else i)
+        else:  # đang dịch: lấy trang từ các lô PDF đã đặt chữ xong
+            for path, chunk in job.pdf_parts:
+                if pages[i] in chunk and Path(path).is_file():
+                    j = chunk.index(pages[i])
+                    png = pdfout.render_page_png(path, 2 * j + 1 if interleave else j)
+                    break
+            else:
+                _bad("Trang này chưa dịch xong", 404)
     return Response(png, media_type="image/png", headers={"Cache-Control": "no-store"})
 
 

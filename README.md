@@ -15,7 +15,9 @@ Chạy được hoàn toàn miễn phí trên máy (Ollama, LM Studio), hoặc q
   - **Dịch nhanh**: dán một đoạn văn, dịch ngay.
 - **PDF giữ bố cục, có hình**: chữ tiếng Việt được đặt vào đúng chỗ chữ gốc (tự co cỡ chữ cho vừa); hình ảnh, sơ đồ, nền màu, khung bảng giữ nguyên. Nhãn chữ trong sơ đồ cũng được dịch tại chỗ. Tuỳ chọn xen kẽ trang gốc để đối chiếu.
 - **Markdown kèm hình**: giữ tiêu đề, danh sách, chú thích và bảng; hình được cắt ra thư mục riêng (`hinh-<tên>/`, nhãn trong hình đã dịch). Bỏ header/footer và số trang; nối lại câu bị cắt qua cột hoặc qua trang.
-- **So sánh trang**: xem trang gốc và trang dịch cạnh nhau ngay trong app.
+- **So sánh trang**: xem trang gốc và trang dịch cạnh nhau ngay trong app — kể cả **trong lúc đang dịch**: lô trang nào dịch xong là xem được ngay.
+- **Sách dày, file nặng**: dịch và đặt chữ vào PDF chạy chồng lên nhau theo lô 25 trang, nên RAM thấp (đo trên file 258 MB / 400 trang: cả app dùng tối đa ~580 MB).
+- **Chạy song song**: nhiều luồng dịch trong cùng một job (ngữ cảnh và thuật ngữ được tính trước nên không bị lệch); chế độ agent chia việc cho nhiều agent dịch cùng lúc.
 - **Dịch có ngữ cảnh**: mỗi đoạn được gửi kèm tên mục và đoạn trước đó, để model hiểu đúng "it", "this"…
 - **Kho thuật ngữ**: thuật ngữ trong kho được đưa cho model dùng đúng. Tuỳ chọn ghi kèm tiếng Anh ở lần đầu xuất hiện trong mỗi mục, ví dụ `xương hàm dưới (mandible)`. Bạn tự thêm, sửa và duyệt thuật ngữ trong app.
 - **Tự kiểm lỗi**: đánh dấu đoạn thiếu số liệu, sót câu tiếng Anh, dịch ngắn hoặc dài bất thường, sai thuật ngữ đã duyệt, để bạn xem lại.
@@ -43,10 +45,14 @@ Tải bộ cài ở mục **[Releases](../../releases)**:
 | **LM Studio** | Miễn phí | Bật Local Server trong LM Studio. |
 | **Gemini API** | Có gói miễn phí | Cần API key. Gói miễn phí có giới hạn lượt gọi, và Google có thể dùng nội dung gửi lên để cải thiện sản phẩm. |
 | **API tương thích OpenAI** | Tuỳ dịch vụ | Mọi dịch vụ có `/chat/completions`. |
-| **Agent** (Claude Code…) | Theo gói agent của bạn | App tách đoạn và tạo `AGENT_TASK.md`; agent dịch xong thì bấm "Ghép bản dịch". |
+| **Agent** (Claude Code…) | Theo gói agent của bạn | App tách đoạn và tạo `AGENT_TASK.md` (hoặc `AGENT_TASK_1.md`, `_2.md`… khi chia cho nhiều agent); agent dịch xong thì bấm "Ghép bản dịch". |
 
 Chọn model theo phần cứng: GPU 6–8 GB thì dùng model 4–8B; GPU 12–16 GB hoặc Mac 16 GB thì 12–14B; GPU 24 GB hoặc Mac 32 GB+ thì 27–32B.
 Cách chọn tốt nhất là dán cùng một đoạn vào **Dịch nhanh**, thử vài model rồi so sánh.
+
+**Dịch nhanh hơn với Ollama:** nếu GPU còn dư bộ nhớ, đặt biến môi trường `OLLAMA_NUM_PARALLEL=2` (hoặc 3–4), khởi động lại Ollama, rồi đặt "Số luồng song song" trong app bằng đúng số đó.
+
+**File lớn:** nên chọn file bằng nút **Chọn file PDF** (mở thẳng file gốc); kéo thả sẽ chép thêm một bản vào thư mục dữ liệu. File vài trăm MB thường là sách scan — app sẽ báo số trang scan ngay khi mở.
 
 ### Dữ liệu được lưu ở đâu
 

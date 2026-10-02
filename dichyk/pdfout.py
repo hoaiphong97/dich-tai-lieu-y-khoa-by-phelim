@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pymupdf
 
-from .extract import Block
+from .extract import MUPDF_LOCK, Block
 
 try:
     import pymupdf_fonts
@@ -174,7 +174,17 @@ def _fit(page, p: Placement, others: list[pymupdf.Rect], archive) -> float:
     return 0.0
 
 
-def render_pdf(
+# Mỗi lô được đặt chữ rồi lưu ra file riêng: RAM chỉ phụ thuộc cỡ lô, không phụ thuộc độ dày sách
+# (file 258 MB / 400 trang: 2,7 GB khi làm một lượt → ~440 MB khi chia lô 25 trang).
+BATCH_PAGES = 25
+
+
+def batches(pages: list[int], size: int | None = None) -> list[list[int]]:
+    size = size or BATCH_PAGES  # đọc lúc gọi để chỉnh được cỡ lô
+    return [pages[i:i + size] for i in range(0, len(pages), size)]
+
+
+def render_part(
     source: str | Path,
     pages: list[int],
     blocks: list[Block],
@@ -182,22 +192,28 @@ def render_pdf(
     target: str | Path,
     *,
     interleave: bool = False,
-    progress=None,
+    placements: tuple | None = None,
 ) -> dict:
-    """Ghi PDF đã dịch chỉ gồm các trang trong `pages`. Trả về thống kê."""
-    placements, obstacles = _placements(blocks, segments)
+    """Đặt bản dịch vào một lô trang và lưu thành một file PDF riêng."""
+    placements_list, obstacles = placements or _placements(blocks, segments)
+    wanted = set(pages)
     by_page: dict[int, list[Placement]] = {}
-    for p in placements:
-        by_page.setdefault(p.page, []).append(p)
+    for p in placements_list:
+        if p.page in wanted:
+            by_page.setdefault(p.page, []).append(
+                Placement(p.page, pymupdf.Rect(p.rect), p.text, p.size, p.color, p.bold, p.kind)
+            )
 
-    archive = _archive()
-    doc = pymupdf.open(source)
-    doc.select([p - 1 for p in pages])
-    shrunk = 0
-    for index, page_no in enumerate(pages):
-        page = doc[index]
-        items = by_page.get(page_no, [])
-        if items:
+    with MUPDF_LOCK:
+        archive = _archive()
+        doc = pymupdf.open(source)
+        doc.select([p - 1 for p in pages])
+        shrunk = 0
+        for index, page_no in enumerate(pages):
+            page = doc[index]
+            items = by_page.get(page_no, [])
+            if not items:
+                continue
             for p in items:
                 if p.size <= 0:
                     p.size = _measure_size(page, p.rect)
@@ -213,32 +229,97 @@ def render_pdf(
                 others = [r for r in rects if r is not p.rect]
                 if _fit(page, p, others, archive) < 0.7:
                     shrunk += 1
-        if progress:
-            progress(index + 1, len(pages))
 
-    if interleave:
-        original = pymupdf.open(source)
-        out = pymupdf.open()
-        for index, page_no in enumerate(pages):
-            out.insert_pdf(original, from_page=page_no - 1, to_page=page_no - 1)
-            out.insert_pdf(doc, from_page=index, to_page=index)
+        if interleave:
+            original = pymupdf.open(source)
+            out = pymupdf.open()
+            for index, page_no in enumerate(pages):
+                out.insert_pdf(original, from_page=page_no - 1, to_page=page_no - 1)
+                out.insert_pdf(doc, from_page=index, to_page=index)
+            doc.close()
+            original.close()
+            doc = out
+
+        try:
+            doc.subset_fonts()
+        except Exception:
+            pass
+        Path(target).parent.mkdir(parents=True, exist_ok=True)
+        doc.save(str(target), garbage=3, deflate=True)
         doc.close()
-        original.close()
-        doc = out
+    return {"placed": sum(len(v) for v in by_page.values()), "shrunk": shrunk}
 
+
+def merge_parts(
+    parts: list[str | Path], target: str | Path, *, source: str | Path | None = None,
+    pages: list[int] | None = None, interleave: bool = False,
+) -> None:
+    """Ghép các lô thành PDF hoàn chỉnh; mang theo mục lục (bookmark) của bản gốc nếu có."""
+    with MUPDF_LOCK:
+        out = pymupdf.open()
+        for part in parts:
+            with pymupdf.open(part) as d:
+                out.insert_pdf(d)
+        if source and pages:
+            try:
+                with pymupdf.open(source) as src:
+                    toc = src.get_toc(simple=True)
+                position = {p: (2 * i + 2 if interleave else i + 1) for i, p in enumerate(pages)}
+                new_toc, last_level = [], 0
+                for level, title, page_no in toc:
+                    if page_no in position and level <= last_level + 1:
+                        new_toc.append([level, title, position[page_no]])
+                        last_level = level
+                if new_toc and new_toc[0][0] == 1:
+                    out.set_toc(new_toc)
+            except Exception:
+                pass  # mục lục hỏng không được làm hỏng cả file
+        Path(target).parent.mkdir(parents=True, exist_ok=True)
+        out.save(str(target), garbage=3, deflate=True)
+        out.close()
+
+
+def render_pdf(
+    source: str | Path,
+    pages: list[int],
+    blocks: list[Block],
+    segments,
+    target: str | Path,
+    *,
+    interleave: bool = False,
+    progress=None,
+    batch_size: int | None = None,
+) -> dict:
+    """Ghi PDF đã dịch chỉ gồm các trang trong `pages` (làm theo lô để tiết kiệm RAM)."""
+    target = Path(target)
+    work = target.with_name(target.name + ".parts")
+    work.mkdir(parents=True, exist_ok=True)
+    precomputed = _placements(blocks, segments)
+    parts, placed, shrunk, done = [], 0, 0, 0
     try:
-        doc.subset_fonts()
-    except Exception:
-        pass
-    Path(target).parent.mkdir(parents=True, exist_ok=True)
-    doc.save(str(target), garbage=3, deflate=True)
-    doc.close()
-    return {"placed": len(placements), "shrunk": shrunk}
+        for k, chunk in enumerate(batches(pages, batch_size)):
+            part = work / f"part_{k:04d}.pdf"
+            stats = render_part(source, chunk, blocks, segments, part, interleave=interleave, placements=precomputed)
+            parts.append(part)
+            placed += stats["placed"]
+            shrunk += stats["shrunk"]
+            done += len(chunk)
+            if progress:
+                progress(done, len(pages))
+        merge_parts(parts, target, source=source, pages=pages, interleave=interleave)
+    finally:
+        for part in parts:
+            part.unlink(missing_ok=True)
+        try:
+            work.rmdir()
+        except OSError:
+            pass
+    return {"placed": placed, "shrunk": shrunk}
 
 
 def render_page_png(path: str | Path, index: int, dpi: int = 110) -> bytes:
     """Ảnh một trang (đếm từ 0) để xem so sánh trong app."""
-    with pymupdf.open(path) as doc:
+    with MUPDF_LOCK, pymupdf.open(path) as doc:
         index = max(0, min(index, doc.page_count - 1))
         return doc[index].get_pixmap(dpi=dpi).tobytes("png")
 
@@ -268,7 +349,7 @@ def export_figures(
     folder.mkdir(parents=True, exist_ok=True)
     out: dict[int, str] = {}
     counter: dict[int, int] = {}
-    with pymupdf.open(source) as doc:
+    with MUPDF_LOCK, pymupdf.open(source) as doc:
         for index, block in figures:
             page_no = int(block.parts[0][0])
             rect = pymupdf.Rect(block.parts[0][1:5]) + (-4, -4, 4, 4)

@@ -353,6 +353,7 @@ function renderJob(job) {
   $("#view").innerHTML = `<div class="panel" id="job-panel"></div><div id="job-result"></div>`;
   state.resultTab = null;
   state.comparePage = 0;
+  state.liveCtl = null;
   drawJob(job, true);
   if (ACTIVE.includes(job.status)) startPolling(job.id);
 }
@@ -422,21 +423,25 @@ function drawJob(job, full = false) {
   });
   $$("[data-copy]").forEach((b) => (b.onclick = () => copyText(b.dataset.copy)));
   if (job.status === "done" && (full || lastStatus !== "done")) drawResult(job);
-  if (job.status !== "done") $("#job-result").innerHTML = "";
+  else if (active) drawLive(job);
+  else if (job.status !== "done") $("#job-result").innerHTML = "";
   lastStatus = job.status;
 }
 
 function agentBox(job) {
-  const prompt = `Đọc file ${job.job_dir}/AGENT_TASK.md và làm theo hướng dẫn trong đó.`;
+  const n = job.agent_parts || 1;
+  const sep = job.job_dir.includes("\\") ? "\\" : "/";
+  const prompts = Array.from({ length: n }, (_, k) =>
+    `Đọc file ${job.job_dir}${sep}AGENT_TASK${n > 1 ? "_" + (k + 1) : ""}.md và làm theo hướng dẫn trong đó.`);
   return `
     <div class="agent-box">
-      <b>Tài liệu đã được tách thành ${job.total} đoạn, sẵn sàng cho agent dịch.</b>
+      <b>Tài liệu đã được tách thành ${job.total} đoạn${n > 1 ? `, chia làm ${n} phần để ${n} agent dịch cùng lúc` : ""}.</b>
       <ol class="small" style="margin:8px 0 0;padding-left:18px;color:var(--ink-2)">
-        <li>Mở Claude Code (hoặc agent khác) và gửi câu lệnh sau:</li>
+        <li>${n > 1 ? `Mở ${n} phiên Claude Code (hoặc agent khác), mỗi phiên gửi một câu lệnh:` : "Mở Claude Code (hoặc agent khác) và gửi câu lệnh sau:"}</li>
       </ol>
-      <div class="copyline"><span class="code">${esc(prompt)}</span><button class="btn" data-copy="${esc(prompt)}">${icon("copy")} Chép</button></div>
+      ${prompts.map((pr, k) => `<div class="copyline">${n > 1 ? `<span class="chip teal">Phần ${k + 1}</span>` : ""}<span class="code">${esc(pr)}</span><button class="btn" data-copy="${esc(pr)}">${icon("copy")} Chép</button></div>`).join("")}
       <ol class="small" start="2" style="margin:10px 0 0;padding-left:18px;color:var(--ink-2)">
-        <li>Khi agent dịch xong (tạo file <code>translations.jsonl</code>), bấm “Ghép bản dịch”.</li>
+        <li>Khi ${n > 1 ? "các agent" : "agent"} dịch xong (tạo file <code>translations${n > 1 ? "_*" : ""}.jsonl</code>), bấm “Ghép bản dịch”. Ghép giữa chừng cũng được: đoạn chưa dịch sẽ giữ tiếng Anh.</li>
       </ol>
       <div class="row" style="margin-top:12px">
         <button class="btn primary" id="assemble">${icon("merge")} Ghép bản dịch</button>
@@ -447,6 +452,7 @@ function agentBox(job) {
 
 async function drawResult(job) {
   const box = $("#job-result");
+  state.liveCtl = null;
   const reviewCount = job.review?.length || 0;
   const hasPdf = !!job.outputs?.pdf, hasMd = !!job.outputs?.md;
   if (!["compare", "preview", "review", "md"].includes(state.resultTab)
@@ -475,24 +481,7 @@ async function showTab(job) {
   $$("#tabs [data-t]").forEach((b) => b.classList.toggle("on", b.dataset.t === state.resultTab));
   const body = $("#tab-body");
   if (state.resultTab === "compare") {
-    const total = (job.page_list || []).length || 1;
-    const draw = () => {
-      const i = state.comparePage = Math.max(0, Math.min(total - 1, state.comparePage));
-      const page = (job.page_list || [])[i] ?? i + 1;
-      body.innerHTML = `
-        <div class="compare-bar">
-          <button class="btn" id="pg-prev" ${i === 0 ? "disabled" : ""}>‹ Trang trước</button>
-          <span>Trang <b>${page}</b> <span class="muted">(${i + 1}/${total})</span></span>
-          <button class="btn" id="pg-next" ${i >= total - 1 ? "disabled" : ""}>Trang sau ›</button>
-        </div>
-        <div class="compare">
-          <figure><figcaption>Bản gốc</figcaption><img alt="Trang gốc ${page}" src="/api/jobs/${job.id}/page?side=src&i=${i}"></figure>
-          <figure><figcaption>Bản dịch</figcaption><img alt="Trang dịch ${page}" src="/api/jobs/${job.id}/page?side=dst&i=${i}"></figure>
-        </div>`;
-      $("#pg-prev").onclick = () => { state.comparePage--; draw(); };
-      $("#pg-next").onclick = () => { state.comparePage++; draw(); };
-    };
-    draw();
+    renderCompare(body, job, (job.page_list || []).length || 1);
   } else if (state.resultTab === "preview") {
     let html = await api(`/api/jobs/${job.id}/preview`);
     html = html.replace(/<!-- Trang (\d+) -->/g, '<div class="pgmark"><span class="pg">tr. $1</span></div>')
@@ -512,6 +501,57 @@ async function showTab(job) {
           </div>`).join("")}</div>`
       : `<div class="empty-state">${icon("check")}<div>Không có đoạn nào bị đánh dấu.</div></div>`;
   }
+}
+
+function renderCompare(body, job, total) {
+  // Vẽ khung một lần; đổi trang thì chỉ đổi ảnh, thêm trang (khi job đang chạy) thì chỉ cập nhật thanh điều hướng.
+  body.innerHTML = `
+    <div class="compare-bar"></div>
+    <div class="compare">
+      <figure><figcaption>Bản gốc</figcaption><img class="cmp-src" alt=""></figure>
+      <figure><figcaption>Bản dịch</figcaption><img class="cmp-dst" alt=""></figure>
+    </div>`;
+  const ctl = { total };
+  const bar = () => {
+    const i = state.comparePage;
+    const page = (job.page_list || [])[i] ?? i + 1;
+    $(".compare-bar", body).innerHTML = `
+      <button class="btn" data-go="-1" ${i === 0 ? "disabled" : ""}>‹ Trang trước</button>
+      <span>Trang <b>${page}</b> <span class="muted">(${i + 1}/${ctl.total})</span></span>
+      <button class="btn" data-go="1" ${i >= ctl.total - 1 ? "disabled" : ""}>Trang sau ›</button>`;
+    $$("[data-go]", body).forEach((b) => (b.onclick = () => { state.comparePage += +b.dataset.go; show(); }));
+  };
+  const show = () => {
+    const i = state.comparePage = Math.max(0, Math.min(ctl.total - 1, state.comparePage || 0));
+    const page = (job.page_list || [])[i] ?? i + 1;
+    const src = $(".cmp-src", body), dst = $(".cmp-dst", body);
+    src.alt = `Trang gốc ${page}`; dst.alt = `Trang dịch ${page}`;
+    src.src = `/api/jobs/${job.id}/page?side=src&i=${i}`;
+    dst.src = `/api/jobs/${job.id}/page?side=dst&i=${i}&v=${job.status}`;
+    bar();
+  };
+  ctl.setTotal = (n) => { ctl.total = n; bar(); };
+  show();
+  return ctl;
+}
+
+/* Xem các trang đã dịch xong trong lúc job còn chạy */
+function drawLive(job) {
+  const box = $("#job-result");
+  const ready = job.pdf_pages_ready || 0;
+  if (!ready) { box.innerHTML = ""; state.liveCtl = null; return; }
+  if (!$("#live-body") || !state.liveCtl) {
+    box.innerHTML = `
+      <div class="panel" style="margin-top:20px">
+        <div class="panel-head"><h2>Trang đã dịch xong</h2>
+          <span class="muted small" id="live-count"></span></div>
+        <div id="live-body"></div>
+      </div>`;
+    state.liveCtl = renderCompare($("#live-body"), job, ready);
+  } else if (state.liveCtl.total !== ready) {
+    state.liveCtl.setTotal(ready);
+  }
+  $("#live-count").textContent = `${ready} trang — xem được ngay, không cần chờ dịch hết`;
 }
 
 function startPolling(jobId) {
@@ -750,7 +790,11 @@ function renderSettings() {
     const p = presets[s.preset] || {};
     const f = $("#engine-fields");
     if (s.engine === "agent") {
-      f.innerHTML = `<div class="notice">${icon("bolt")}<div>App sẽ tách tài liệu thành các đoạn và tạo hướng dẫn cho agent (Claude Code…). Agent dịch xong, bạn bấm “Ghép bản dịch” để xuất Markdown. Không cần cài model.</div></div>`;
+      f.innerHTML = `<div class="notice">${icon("bolt")}<div>App sẽ tách tài liệu thành các đoạn và tạo hướng dẫn cho agent (Claude Code…). Agent dịch xong, bạn bấm “Ghép bản dịch” để xuất PDF và Markdown. Không cần cài model.</div></div>
+        <div class="field" style="margin-top:16px;max-width:320px"><label>Số agent dịch song song</label>
+          <input class="input" type="number" min="1" max="8" id="agent_parts" value="${s.agent_parts || 1}">
+          <span class="hint">Chia tài liệu thành nhiều phần liền mạch, mỗi agent dịch một phần cùng lúc. Ngữ cảnh và thuật ngữ vẫn được giữ.</span></div>`;
+      $("#agent_parts").addEventListener("input", (e) => (s.agent_parts = e.target.value));
     } else {
       f.innerHTML = `
         <div class="field"><label>Địa chỉ API</label><input class="input" id="base_url" value="${esc(s.base_url)}" placeholder="${esc(p.base_url || "https://…/v1")}"></div>
@@ -761,7 +805,7 @@ function renderSettings() {
           <button class="btn" id="load-models">${icon("refresh")} Lấy danh sách</button></div>
           <span class="hint" id="models-hint"></span></div>
         <div class="row" style="align-items:flex-start">
-          <div class="field grow"><label>Số luồng song song</label><input class="input" type="number" min="1" max="8" id="workers" value="${s.workers}"><span class="hint">Model chạy trên máy: để 1. API trên mạng: 2–4.</span></div>
+          <div class="field grow"><label>Số luồng song song</label><input class="input" type="number" min="1" max="8" id="workers" value="${s.workers}"><span class="hint">Ollama: bằng OLLAMA_NUM_PARALLEL (mặc định 1, xem hướng dẫn bên phải). API trên mạng: 2–4.</span></div>
           <div class="field grow"><label>Temperature</label><input class="input" type="number" step="0.1" min="0" max="1.5" id="temperature" value="${s.temperature}"><span class="hint">Thấp = bám sát bản gốc hơn. Nên 0.1–0.3.</span></div>
         </div>
         <button class="btn" id="test">${icon("bolt")} Kiểm tra kết nối</button>
@@ -837,7 +881,11 @@ function guideFor(preset) {
         <li>GPU 12–16 GB hoặc Mac 16 GB: model 12–14B (gemma3:12b, qwen3:14b…)</li>
         <li>GPU 24 GB hoặc Mac 32 GB+: model 27–32B</li>
       </ul>
-      <p class="small muted">Model càng lớn dịch càng tốt nhưng càng chậm. Nên thử vài model trên cùng một đoạn trong “Dịch nhanh” để chọn.</p>`,
+      <p class="small muted">Model càng lớn dịch càng tốt nhưng càng chậm. Nên thử vài model trên cùng một đoạn trong “Dịch nhanh” để chọn.</p>
+      <h3>Dịch nhanh hơn: cho Ollama xử lý song song</h3>
+      <p class="small">Nếu GPU còn dư bộ nhớ, đặt biến môi trường <span class="code">OLLAMA_NUM_PARALLEL=2</span> (hoặc 3–4) rồi khởi động lại Ollama, sau đó tăng “Số luồng song song” ở đây lên cùng số đó. Hết bộ nhớ GPU thì model chạy chậm hẳn — khi đó giảm lại.</p>
+      <ul class="small"><li>Windows: Settings → System → About → Advanced system settings → Environment Variables → New.</li>
+      <li>macOS: <span class="code">launchctl setenv OLLAMA_NUM_PARALLEL 2</span> rồi mở lại Ollama.</li></ul>`,
     lmstudio: `
       <h3>Dùng LM Studio</h3>
       <ol>

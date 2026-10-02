@@ -330,12 +330,12 @@ def review_items(segments: list[Segment]) -> list[dict]:
 AGENT_TASK = """# Nhiệm vụ dịch cho agent
 
 Thư mục này chứa một job dịch tài liệu y khoa Anh → Việt, xuất từ app "Dịch Tài Liệu Y Khoa".
-
+{part_note}
 ## Việc cần làm
-1. Đọc `segments.jsonl`. Mỗi dòng là một đoạn cần dịch:
+1. Đọc `{seg_file}`. Mỗi dòng là một đoạn cần dịch:
    `{{"id", "kind", "page", "section", "previous", "terms", "src"}}`
 2. Dịch `src` sang tiếng Việt theo quy tắc bên dưới. `section` và `previous` chỉ để hiểu ngữ cảnh, không dịch.
-3. Ghi kết quả vào `translations.jsonl`, mỗi dòng: `{{"id": <id>, "dst": "<bản dịch>"}}`.
+3. Ghi kết quả vào `{out_file}`, mỗi dòng: `{{"id": <id>, "dst": "<bản dịch>"}}`.
    Có thể ghi dần theo lô (ví dụ 30–50 đoạn một lần) và ghi tiếp vào cuối file.
 4. Dịch xong, báo người dùng bấm **"Ghép bản dịch"** trong app. App sẽ kiểm lỗi và xuất file Markdown.
 
@@ -355,27 +355,49 @@ Thư mục này chứa một job dịch tài liệu y khoa Anh → Việt, xuấ
 """
 
 
-def export_agent_task(job_dir: Path, segments: list[Segment], *, source: str, scope: str) -> Path:
+def export_agent_task(
+    job_dir: Path, segments: list[Segment], *, source: str, scope: str, parts: int = 1,
+) -> list[Path]:
+    """Xuất việc cho agent. parts > 1: chia thành nhiều phần liền mạch để nhiều agent dịch song song.
+
+    Mỗi đoạn đã mang sẵn ngữ cảnh (mục, đoạn trước, thuật ngữ lần đầu), nên chia phần không làm mất ngữ cảnh.
+    """
     job_dir.mkdir(parents=True, exist_ok=True)
-    with open(job_dir / "segments.jsonl", "w", encoding="utf-8") as stream:
-        for s in segments:
-            record = {
-                "id": s.id, "kind": s.kind, "page": s.page, "section": s.section,
-                "previous": s.previous[-300:], "terms": s.terms, "src": s.text,
-            }
-            stream.write(json.dumps(record, ensure_ascii=False) + "\n")
+    for old in list(job_dir.glob("segments*.jsonl")) + list(job_dir.glob("AGENT_TASK*.md")):
+        old.unlink()  # xoá file việc của lần xuất trước (giữ nguyên translations*.jsonl đã dịch)
+    parts = max(1, min(int(parts), len(segments) or 1))
+    size = -(-len(segments) // parts) if segments else 0
     rules = prompts.SYSTEM.split("Rules:", 1)[-1].strip()
-    task = AGENT_TASK.format(rules=rules, source=source, scope=scope, count=len(segments))
-    path = job_dir / "AGENT_TASK.md"
-    path.write_text(task, encoding="utf-8")
-    return path
+    paths = []
+    for k in range(parts):
+        chunk = segments[k * size:(k + 1) * size]
+        suffix = "" if parts == 1 else f"_{k + 1}"
+        seg_file, out_file = f"segments{suffix}.jsonl", f"translations{suffix}.jsonl"
+        with open(job_dir / seg_file, "w", encoding="utf-8") as stream:
+            for s in chunk:
+                record = {
+                    "id": s.id, "kind": s.kind, "page": s.page, "section": s.section,
+                    "previous": s.previous[-300:], "terms": s.terms, "src": s.text,
+                }
+                stream.write(json.dumps(record, ensure_ascii=False) + "\n")
+        note = "" if parts == 1 else (
+            f"\n> **Đây là phần {k + 1}/{parts}** (trang {chunk[0].page}–{chunk[-1].page}). "
+            "Các agent khác đang dịch các phần còn lại cùng lúc: chỉ đọc và ghi đúng hai file của phần này.\n"
+        )
+        task = AGENT_TASK.format(
+            rules=rules, source=source, scope=scope, count=len(chunk),
+            seg_file=seg_file, out_file=out_file, part_note=note,
+        )
+        path = job_dir / f"AGENT_TASK{suffix}.md"
+        path.write_text(task, encoding="utf-8")
+        paths.append(path)
+    return paths
 
 
 def load_agent_translations(job_dir: Path, segments: list[Segment]) -> int:
-    """Nạp translations.jsonl vào segments. Trả về số đoạn còn thiếu."""
+    """Nạp translations*.jsonl (một hoặc nhiều phần) vào segments. Trả về số đoạn còn thiếu."""
     table: dict[int, str] = {}
-    path = job_dir / "translations.jsonl"
-    if path.is_file():
+    for path in sorted(job_dir.glob("translations*.jsonl")):
         with open(path, encoding="utf-8") as stream:
             for line in stream:
                 line = line.strip()
