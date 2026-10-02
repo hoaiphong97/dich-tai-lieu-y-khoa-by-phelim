@@ -57,9 +57,18 @@ async function copyText(text) {
 
 const STATUS = {
   queued: ["Đang chờ", ""], extracting: ["Đang đọc", "teal"], translating: ["Đang dịch", "teal"],
-  waiting_agent: ["Chờ agent", "amber"], done: ["Hoàn tất", "green"], error: ["Lỗi", "red"], cancelled: ["Đã huỷ", ""],
+  waiting_agent: ["Chờ agent", "amber"], assembling: ["Đang ghép", "teal"],
+  done: ["Hoàn tất", "green"], error: ["Lỗi", "red"], cancelled: ["Đã huỷ", ""],
 };
-const ACTIVE = ["queued", "extracting", "translating"];
+const ACTIVE = ["queued", "extracting", "translating", "assembling"];
+/* % tiến độ: lúc ghép bản dịch tính theo bước đang chạy (trang/hình), còn lại theo số đoạn đã dịch.
+   null = chưa đo được (thanh chạy vô định). */
+function jobPct(job) {
+  if (job.status === "done") return 100;
+  if (job.status === "assembling") return job.step_total ? Math.round((100 * job.step_done) / job.step_total) : null;
+  if (["queued", "extracting"].includes(job.status)) return null;
+  return job.total ? Math.round((100 * job.done) / job.total) : 0;
+}
 const statusChip = (s) => `<span class="chip ${STATUS[s]?.[1] || ""}">${STATUS[s]?.[0] || s}</span>`;
 
 /* ============================ Trạng thái ============================ */
@@ -374,7 +383,8 @@ function drawJob(job, full = false) {
   const panel = $("#job-panel");
   if (!panel) return;
   const active = ACTIVE.includes(job.status);
-  const pct = job.total ? Math.round((100 * job.done) / job.total) : 0;
+  const assembling = job.status === "assembling";
+  const pct = jobPct(job);
   const pages = pagesOfScope(job);
   const strip = pages && pages.length <= 400
     ? `<div class="pages-strip" title="Mỗi ô là một trang">${pages.map((p) => `<span class="${p < job.current_page || job.status === "done" ? "done" : p === job.current_page && active ? "now" : ""}" title="Trang ${p}"></span>`).join("")}</div>`
@@ -390,10 +400,12 @@ function drawJob(job, full = false) {
         ${statusChip(job.status)}
       </div>
       ${job.status === "waiting_agent" ? agentBox(job) : `
-      <div class="bar ${job.status === "extracting" || (job.status === "queued") ? "indeterminate" : ""}"><div style="width:${job.status === "done" ? 100 : pct}%"></div></div>
-      <div class="row small"><span>${esc(job.phase)}</span><span class="muted" style="margin-left:auto">${job.total ? pct + "%" : ""}</span></div>
+      <div class="bar ${pct === null ? "indeterminate" : ""}"><div style="width:${pct ?? 0}%"></div></div>
+      <div class="row small"><span>${esc(job.phase)}</span><span class="muted" style="margin-left:auto">${pct !== null && (job.total || assembling) ? pct + "%" : ""}</span></div>
       <div class="stats">
-        <div class="stat"><div class="k">Đoạn đã dịch</div><div class="v">${job.done}<span class="muted" style="font-size:13px"> / ${job.total || "…"}</span></div></div>
+        ${assembling
+          ? `<div class="stat"><div class="k" title="Trang đã đặt chữ xong và mở xem được bên dưới (cập nhật theo lô 25 trang)">Trang xem được</div><div class="v">${job.pdf_pages_ready || 0}<span class="muted" style="font-size:13px"> / ${(job.page_list || []).length || "…"}</span></div></div>`
+          : `<div class="stat"><div class="k">Đoạn đã dịch</div><div class="v">${job.done}<span class="muted" style="font-size:13px"> / ${job.total || "…"}</span></div></div>`}
         <div class="stat"><div class="k">Trang hiện tại</div><div class="v">${job.current_page || "—"}</div></div>
         <div class="stat"><div class="k">Cần kiểm tra</div><div class="v" style="color:${job.flagged ? "var(--amber)" : "inherit"}">${job.flagged}</div></div>
         <div class="stat"><div class="k">${active ? "Còn lại" : "Từ bộ nhớ đệm"}</div><div class="v" style="font-size:${active ? 16 : 19}px">${active ? fmtEta(job.eta) : job.cached}</div></div>
@@ -417,9 +429,10 @@ function drawJob(job, full = false) {
     catch (e) { toast(e.message, true); }
   });
   $("#open-folder")?.addEventListener("click", () => api(`/api/jobs/${job.id}/open-folder`, { body: {} }).catch((e) => toast(e.message, true)));
-  $("#assemble")?.addEventListener("click", async () => {
-    try { const j = await api(`/api/jobs/${job.id}/assemble`, { body: {} }); drawJob(j, true); toast(j.phase); }
-    catch (e) { toast(e.message, true); }
+  $("#assemble")?.addEventListener("click", async (e) => {
+    e.currentTarget.disabled = true;
+    try { const j = await api(`/api/jobs/${job.id}/assemble`, { body: {} }); drawJob(j, true); startPolling(j.id); refreshNavCount(); }
+    catch (err) { toast(err.message, true); e.currentTarget.disabled = false; }
   });
   $$("[data-copy]").forEach((b) => (b.onclick = () => copyText(b.dataset.copy)));
   if (job.status === "done" && (full || lastStatus !== "done")) drawResult(job);
@@ -435,6 +448,7 @@ function agentBox(job) {
     `Đọc file ${job.job_dir}${sep}AGENT_TASK${n > 1 ? "_" + (k + 1) : ""}.md và làm theo hướng dẫn trong đó.`);
   return `
     <div class="agent-box">
+      ${job.error ? `<div class="notice red" style="margin-bottom:12px">${icon("alert")}<div>${esc(job.error)}</div></div>` : ""}
       <b>Tài liệu đã được tách thành ${job.total} đoạn${n > 1 ? `, chia làm ${n} phần để ${n} agent dịch cùng lúc` : ""}.</b>
       <ol class="small" style="margin:8px 0 0;padding-left:18px;color:var(--ink-2)">
         <li>${n > 1 ? `Mở ${n} phiên Claude Code (hoặc agent khác), mỗi phiên gửi một câu lệnh:` : "Mở Claude Code (hoặc agent khác) và gửi câu lệnh sau:"}</li>
@@ -563,7 +577,8 @@ function startPolling(jobId) {
       if (!ACTIVE.includes(job.status)) {
         stopPolling();
         refreshNavCount();
-        if (job.status === "done") toast("Đã dịch xong");
+        if (job.status === "done") toast(job.phase || "Đã dịch xong");
+        else if (job.status === "waiting_agent" && job.error) toast(job.error, true);
       }
     } catch { stopPolling(); }
   }, 1000);
@@ -654,7 +669,7 @@ async function renderHistory() {
         <tr class="click" data-id="${j.id}">
           <td><b>${esc(j.file_name)}</b><div class="muted small">${esc(j.engine || "")}</div></td>
           <td>${esc(j.scope)}</td>
-          <td>${statusChip(j.status)}${ACTIVE.includes(j.status) && j.total ? ` <span class="muted small">${Math.round(100 * j.done / j.total)}%</span>` : ""}</td>
+          <td>${statusChip(j.status)}${ACTIVE.includes(j.status) && jobPct(j) !== null ? ` <span class="muted small">${jobPct(j)}%</span>` : ""}</td>
           <td>${j.status === "done" ? (j.flagged ? `<span class="chip amber">${j.flagged} đoạn</span>` : `<span class="chip green">0</span>`) : ""}</td>
           <td class="muted small">${fmtDate(j.created)}</td>
         </tr>`).join("")}</tbody>

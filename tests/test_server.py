@@ -54,8 +54,11 @@ def test_upload_range_and_agent_flow(client, tmp_path):
     job = _wait(client, job["id"])
     assert job["status"] == "waiting_agent" and job["scope"] == "Trang 3"
 
-    done = client.post(f"/api/jobs/{job['id']}/assemble").json()
-    assert done["status"] == "done"
+    started = client.post(f"/api/jobs/{job['id']}/assemble").json()
+    assert started["status"] == "assembling"  # chạy nền, trả về ngay để giao diện theo dõi tiến độ
+    done = _wait(client, job["id"])
+    assert done["status"] == "done", done
+    assert done["phase"].startswith("Đã ghép") and "chưa dịch" in done["phase"]
     assert done["outputs"]["md"].endswith("book_tr3.vi.md") and done["outputs"]["pdf"].endswith("book_tr3.vi.pdf")
     assert client.get(f"/api/jobs/{job['id']}/download?fmt=pdf").content[:4] == b"%PDF"
     for side in ("src", "dst"):

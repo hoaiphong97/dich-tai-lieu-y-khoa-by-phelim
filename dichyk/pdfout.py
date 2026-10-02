@@ -193,8 +193,12 @@ def render_part(
     *,
     interleave: bool = False,
     placements: tuple | None = None,
+    on_page=None,
 ) -> dict:
-    """Đặt bản dịch vào một lô trang và lưu thành một file PDF riêng."""
+    """Đặt bản dịch vào một lô trang và lưu thành một file PDF riêng.
+
+    on_page(số trang gốc): gọi sau mỗi trang đặt chữ xong, để báo tiến độ.
+    """
     placements_list, obstacles = placements or _placements(blocks, segments)
     wanted = set(pages)
     by_page: dict[int, list[Placement]] = {}
@@ -212,23 +216,24 @@ def render_part(
         for index, page_no in enumerate(pages):
             page = doc[index]
             items = by_page.get(page_no, [])
-            if not items:
-                continue
-            for p in items:
-                if p.size <= 0:
-                    p.size = _measure_size(page, p.rect)
-            for p in items:
-                page.add_redact_annot(p.rect + (0.4, 0.4, -0.4, -0.4))
-            page.apply_redactions(
-                images=pymupdf.PDF_REDACT_IMAGE_NONE,
-                graphics=pymupdf.PDF_REDACT_LINE_ART_NONE,
-                text=pymupdf.PDF_REDACT_TEXT_REMOVE,
-            )
-            rects = [p.rect for p in items] + obstacles.get(page_no, [])
-            for p in items:
-                others = [r for r in rects if r is not p.rect]
-                if _fit(page, p, others, archive) < 0.7:
-                    shrunk += 1
+            if items:
+                for p in items:
+                    if p.size <= 0:
+                        p.size = _measure_size(page, p.rect)
+                for p in items:
+                    page.add_redact_annot(p.rect + (0.4, 0.4, -0.4, -0.4))
+                page.apply_redactions(
+                    images=pymupdf.PDF_REDACT_IMAGE_NONE,
+                    graphics=pymupdf.PDF_REDACT_LINE_ART_NONE,
+                    text=pymupdf.PDF_REDACT_TEXT_REMOVE,
+                )
+                rects = [p.rect for p in items] + obstacles.get(page_no, [])
+                for p in items:
+                    others = [r for r in rects if r is not p.rect]
+                    if _fit(page, p, others, archive) < 0.7:
+                        shrunk += 1
+            if on_page:
+                on_page(page_no)
 
         if interleave:
             original = pymupdf.open(source)
@@ -336,7 +341,7 @@ def slug(text: str) -> str:
 
 def export_figures(
     source: str | Path, blocks: list[Block], folder: Path, dpi: int = 150,
-    page_index: dict[int, int] | None = None,
+    page_index: dict[int, int] | None = None, progress=None,
 ) -> dict[int, str]:
     """Cắt từng hình thành PNG. Trả về {chỉ số block: tên file}.
 
@@ -358,4 +363,6 @@ def export_figures(
             page = doc[page_index[page_no] if page_index else page_no - 1]
             page.get_pixmap(dpi=dpi, clip=rect & page.rect).save(str(folder / name))
             out[index] = name
+            if progress:
+                progress(len(out), len(figures))
     return out

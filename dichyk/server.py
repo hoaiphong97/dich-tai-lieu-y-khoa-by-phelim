@@ -283,7 +283,7 @@ def job_page(job_id: str, side: str = "dst", i: int = 0):
     else:
         interleave = bool(job.options.get("pdf_interleave", settings_mod.load()["pdf_interleave"]))
         final = Path(job.outputs.get("pdf", "") or "_")
-        if job.status not in ACTIVE and final.is_file():
+        if final.is_file() and (job.status not in ACTIVE or not job.pdf_parts):
             png = pdfout.render_page_png(final, 2 * i + 1 if interleave else i)
         else:  # đang dịch: lấy trang từ các lô PDF đã đặt chữ xong
             for path, chunk in job.pdf_parts:

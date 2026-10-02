@@ -19,7 +19,7 @@ from .cache import TranslationCache
 from .engines import EngineError, make_engine
 from .glossary import Glossary
 
-ACTIVE = {"queued", "extracting", "translating"}
+ACTIVE = {"queued", "extracting", "translating", "assembling"}
 
 
 def _now() -> str:
@@ -59,6 +59,9 @@ class Job:
         self.pdf_parts: list = data.get("pdf_parts", [])  # [[file lô, [trang…]]] đã đặt chữ xong
         self.pdf_pages_ready: int = data.get("pdf_pages_ready", 0)
         self.agent_parts: int = data.get("agent_parts", 1)
+        # Tiến độ của bước đang chạy sau khi dịch (đặt chữ vào PDF, cắt hình); 0/0 = chưa đo được
+        self.step_done: int = data.get("step_done", 0)
+        self.step_total: int = data.get("step_total", 0)
         self.error: str = data.get("error", "")
         self.text_input: str = data.get("text_input", "")
         self.cancel_event = threading.Event()
@@ -97,7 +100,12 @@ class JobManager:
                 job = Job(**json.loads(file.read_text(encoding="utf-8")))
             except (OSError, ValueError, TypeError):
                 continue
-            if job.status in ACTIVE:
+            if job.status == "assembling":  # bản dịch của agent vẫn còn nguyên: chỉ cần ghép lại
+                job.status, job.phase = "waiting_agent", "Chờ ghép lại"
+                job.error = "App đã đóng khi đang ghép bản dịch. Bấm “Ghép bản dịch” để ghép lại."
+                job.pdf_parts, job.pdf_pages_ready = [], 0
+                job.save()
+            elif job.status in ACTIVE:
                 job.status = "error"
                 job.error = "App đã đóng khi đang dịch. Bấm “Tiếp tục” để dịch nốt (phần đã dịch được giữ lại)."
                 job.save()
@@ -278,21 +286,78 @@ class JobManager:
             job.save()
 
     def assemble_agent(self, job_id: str) -> Job:
+        """Bắt đầu ghép bản dịch của agent (chạy nền). Giao diện theo dõi tiến độ qua job.phase/step_*."""
         job = self.get(job_id)
+        if job.status == "assembling":
+            return job
+        if job.status in ACTIVE:
+            raise ValueError("Job đang chạy, chưa ghép được")
         if not (job.dir / "state.json").is_file():
             raise ValueError("Job này không có dữ liệu để ghép")
-        blocks, segments = pipeline.load_state(job.dir)
-        missing = pipeline.load_agent_translations(job.dir, segments)
-        job.done = len(segments) - missing
-        job.total = len(segments)
-        job.flagged = sum(1 for s in segments if s.flags)
-        conf = settings_mod.load()
-        self._finish(job, blocks, segments, bool(job.options.get("keep_source", conf["keep_source"])))
-        if missing:
-            job.phase = f"Đã ghép — còn {missing} đoạn agent chưa dịch (giữ nguyên tiếng Anh)"
-        job.finished = _now()
+        job.cancel_event = threading.Event()
+        job.status, job.phase, job.error = "assembling", "Đang nạp bản dịch của agent", ""
+        job.step_done = job.step_total = job.eta = 0
         job.save()
+        threading.Thread(target=self._assemble, args=(job,), daemon=True, name=f"assemble-{job.id}").start()
         return job
+
+    def _assemble(self, job: Job) -> None:
+        started = time.monotonic()
+        conf = settings_mod.load()
+        missing = 0
+        try:
+            blocks, segments = pipeline.load_state(job.dir)
+            missing = pipeline.load_agent_translations(job.dir, segments)
+            job.done, job.total = len(segments) - missing, len(segments)
+            job.flagged = sum(1 for s in segments if s.flags)
+            parts = None
+            if job.type == "pdf" and bool(job.options.get("output_pdf", conf["output_pdf"])):
+                job.page_list = job.page_list or sorted({b.page for b in blocks})
+                job.step_done, job.step_total = 0, len(job.page_list)
+                render_started = time.monotonic()
+
+                def on_page(page_no: int) -> None:
+                    job.step_done += 1
+                    job.current_page = page_no
+                    job.phase = f"Đang đặt chữ vào PDF — trang {job.step_done}/{job.step_total}"
+                    rate = (time.monotonic() - render_started) / job.step_done
+                    job.eta = int(rate * (job.step_total - job.step_done))
+
+                renderer = PartRenderer(
+                    job, blocks, segments, job.page_list,
+                    interleave=bool(job.options.get("pdf_interleave", conf["pdf_interleave"])),
+                    on_page=on_page,
+                )
+                job.save()
+                while renderer.render_next():
+                    job.save()  # một lô xong: giao diện xem được các trang này ngay
+                    if job.cancel_event.is_set():
+                        raise pipeline.Cancelled()
+                parts = renderer.parts
+            self._finish(job, blocks, segments, bool(job.options.get("keep_source", conf["keep_source"])), parts=parts)
+            took = _fmt_duration(time.monotonic() - started)
+            job.phase = (
+                f"Đã ghép trong {took} — còn {missing} đoạn agent chưa dịch (giữ nguyên tiếng Anh)"
+                if missing else f"Đã ghép xong trong {took}"
+            )
+            job.finished = _now()
+        except pipeline.Cancelled:
+            job.status, job.phase = "waiting_agent", "Đã huỷ ghép"
+            self._drop_parts(job)
+        except Exception as exc:  # bản dịch của agent vẫn còn: quay lại chờ ghép, báo lỗi rõ ràng
+            job.status, job.phase = "waiting_agent", "Ghép bị lỗi"
+            job.error = f"Ghép bản dịch bị lỗi — {type(exc).__name__}: {exc}"
+            (job.dir / "error.log").write_text(traceback.format_exc(), encoding="utf-8")
+            self._drop_parts(job)
+        finally:
+            job.eta = 0
+            job.save()
+
+    @staticmethod
+    def _drop_parts(job: Job) -> None:
+        folder = job.dir / "pdf_parts"
+        job.pdf_parts, job.pdf_pages_ready = [], 0
+        shutil.rmtree(folder, ignore_errors=True)
 
     def _finish(self, job: Job, blocks, segments, keep_source: bool, parts: list | None = None) -> None:
         conf = settings_mod.load()
@@ -328,27 +393,39 @@ class JobManager:
 
             def on_page(done, total):
                 job.phase = f"Đang tạo PDF trang {done}/{total}"
+                job.step_done, job.step_total = done, total
 
             if parts:  # các lô đã được đặt chữ trong lúc dịch: chỉ cần ghép
-                job.phase = "Đang ghép PDF"
+                job.phase = f"Đang ghép {len(pages)} trang thành file PDF"
+                job.step_done = job.step_total = job.eta = 0
+                job.save()
                 pdfout.merge_parts(parts, pdf_path, source=job.file_path, pages=pages, interleave=interleave)
+                job.pdf_parts = []  # từ giờ xem trang từ file PDF hoàn chỉnh
                 shutil.rmtree(Path(parts[0]).parent, ignore_errors=True)
-                job.pdf_parts = []
             else:
                 pdfout.render_pdf(
                     job.file_path, pages, blocks, segments, pdf_path, interleave=interleave, progress=on_page,
                 )
             job.pdf_pages_ready = len(pages)
             outputs["pdf"] = str(pdf_path)
+            job.outputs = {**job.outputs, "pdf": str(pdf_path)}  # xem trang từ file này trong lúc cắt hình
         if want_md:
             md_path = base.with_name(base.name + ".vi.md")
             figure_dir = base.with_name("hinh-" + pdfout.slug(base.name))
             job.phase = "Đang cắt hình cho Markdown"
+            job.step_done = job.step_total = job.eta = 0
+            job.save()
+
+            def on_figure(done, total):
+                job.phase = f"Đang cắt hình cho Markdown — hình {done}/{total}"
+                job.step_done, job.step_total = done, total
+
             if want_pdf:  # cắt hình từ PDF đã dịch: nhãn chữ trong hình là tiếng Việt
                 index = {p: (2 * i + 1 if interleave else i) for i, p in enumerate(pages)}
-                names = pdfout.export_figures(pdf_path, blocks, figure_dir, page_index=index)
+                names = pdfout.export_figures(pdf_path, blocks, figure_dir, page_index=index, progress=on_figure)
             else:
-                names = pdfout.export_figures(job.file_path, blocks, figure_dir)
+                names = pdfout.export_figures(job.file_path, blocks, figure_dir, progress=on_figure)
+            job.phase = "Đang ghi file Markdown"
             links = {i: f"{figure_dir.name}/{n}" for i, n in names.items()}
             md_path.write_text(pipeline.render_markdown(blocks, segments, figure_links=links, **render), encoding="utf-8")
             outputs["md"] = str(md_path)
@@ -381,8 +458,9 @@ class PartRenderer:
     Lô được làm theo đúng thứ tự trang để ghép cuối cùng chỉ là nối các file.
     """
 
-    def __init__(self, job: Job, blocks, segments, pages: list[int], *, interleave: bool):
+    def __init__(self, job: Job, blocks, segments, pages: list[int], *, interleave: bool, on_page=None):
         self.job, self.blocks, self.segments, self.interleave = job, blocks, segments, interleave
+        self.on_page = on_page
         self.batches = pdfout.batches(pages)
         self.folder = job.dir / "pdf_parts"
         shutil.rmtree(self.folder, ignore_errors=True)
@@ -406,15 +484,25 @@ class PartRenderer:
     def flush(self, force: bool = False) -> bool:
         rendered = False
         while self.next < len(self.batches) and (force or self.needed[self.next] <= self.done):
-            chunk = self.batches[self.next]
-            target = self.folder / f"part_{self.next:04d}.pdf"
-            pdfout.render_part(self.job.file_path, chunk, self.blocks, self.segments, target, interleave=self.interleave)
-            self.parts.append(str(target))
-            self.job.pdf_parts.append([str(target), chunk])
-            self.job.pdf_pages_ready += len(chunk)
-            self.next += 1
+            self.render_next()
             rendered = True
         return rendered
+
+    def render_next(self) -> bool:
+        """Đặt chữ cho lô kế tiếp (không chờ bản dịch). Trả về False khi đã hết lô."""
+        if self.next >= len(self.batches):
+            return False
+        chunk = self.batches[self.next]
+        target = self.folder / f"part_{self.next:04d}.pdf"
+        pdfout.render_part(
+            self.job.file_path, chunk, self.blocks, self.segments, target,
+            interleave=self.interleave, on_page=self.on_page,
+        )
+        self.parts.append(str(target))
+        self.job.pdf_parts.append([str(target), chunk])
+        self.job.pdf_pages_ready += len(chunk)
+        self.next += 1
+        return True
 
 
 def _describe_pages(pages: list[int]) -> str:

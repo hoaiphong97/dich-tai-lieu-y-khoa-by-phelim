@@ -137,6 +137,48 @@ def test_part_renderer_renders_batches_in_order(tmp_path, monkeypatch):
     assert pymupdf.open(tmp_path / "m.pdf").page_count == 3
 
 
+def test_assemble_reports_page_progress_and_can_cancel(tmp_path, monkeypatch):
+    from dichyk import jobs, pdfout as po, settings
+
+    monkeypatch.setenv("DICHYK_DATA", str(tmp_path / "data"))
+    monkeypatch.setattr(po, "BATCH_PAGES", 1)
+    settings.save({"engine": "agent", "preset": "agent", "output_dir": str(tmp_path / "out")})
+    pdf = build(str(tmp_path / "book.pdf"))
+    pages = [1, 2, 3]
+    blocks = extract.extract_blocks(pdf, pages)
+    segments = pipeline.build_segments(blocks, None, bilingual=False)
+    manager = jobs.JobManager()
+    job = jobs.Job(type="pdf", file_path=pdf, file_name="book.pdf", page_list=pages,
+                   scope="Toàn bộ tài liệu", status="waiting_agent")
+    manager._register(job)
+    pipeline.save_state(job.dir, blocks, segments)
+
+    seen = []
+    real = po.render_part
+
+    def spy(*args, on_page=None, **kwargs):  # ghi lại tiến độ mà giao diện sẽ thấy sau mỗi trang
+        def hook(page_no):
+            on_page(page_no)
+            seen.append((page_no, job.step_done, job.step_total, job.phase))
+        return real(*args, on_page=hook, **kwargs)
+
+    monkeypatch.setattr(po, "render_part", spy)
+    manager._assemble(job)
+    assert job.status == "done", job.error
+    assert [s[:3] for s in seen] == [(1, 1, 3), (2, 2, 3), (3, 3, 3)]
+    assert "trang 2/3" in seen[1][3]
+    assert job.phase.startswith("Đã ghép")
+    assert pymupdf.open(job.outputs["pdf"]).page_count == 3
+    assert not (job.dir / "pdf_parts").exists()
+
+    # Huỷ giữa chừng: quay về chờ ghép, dọn các lô tạm, không báo lỗi
+    job.status = "waiting_agent"
+    job.cancel_event.set()
+    manager._assemble(job)
+    assert job.status == "waiting_agent" and job.phase == "Đã huỷ ghép" and not job.error
+    assert not (job.dir / "pdf_parts").exists() and job.pdf_pages_ready == 0
+
+
 def test_agent_task_split_and_load(tmp_path):
     blocks = pipeline.text_to_blocks("First paragraph here.\n\nSecond one.\n\nThird one.\n\nFourth one.")
     segs = pipeline.build_segments(blocks, None, bilingual=False)
