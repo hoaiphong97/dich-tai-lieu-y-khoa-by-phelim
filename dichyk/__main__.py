@@ -57,17 +57,23 @@ def _start_server(port: int) -> None:
 
 
 class DesktopApi:
-    """Hàm gọi được từ giao diện khi chạy trong cửa sổ app."""
+    """Hàm gọi được từ giao diện khi chạy trong cửa sổ app.
+
+    pywebview duyệt đệ quy mọi thuộc tính công khai của js_api để đưa sang JavaScript.
+    Vì vậy chỉ được có phương thức công khai; mọi dữ liệu khác (nhất là đối tượng cửa sổ)
+    phải đặt tên bắt đầu bằng "_". Nếu để `self.window`, pywebview sẽ lần vào cả cây đối tượng
+    WinForms/Cocoa của cửa sổ và làm app treo ngay khi mở.
+    """
 
     def __init__(self):
-        self.window = None
+        self._window = None
 
     def pick_pdf(self):
         import webview
 
         dialog = getattr(webview, "FileDialog", None)
         kind = dialog.OPEN if dialog else webview.OPEN_DIALOG
-        result = self.window.create_file_dialog(kind, allow_multiple=False, file_types=("PDF (*.pdf)",))
+        result = self._window.create_file_dialog(kind, allow_multiple=False, file_types=("PDF (*.pdf)",))
         return result[0] if result else None
 
 
@@ -99,7 +105,7 @@ def main(argv=None) -> int:
             window = webview.create_window(
                 paths.APP_TITLE, url, js_api=api, width=1280, height=840, min_size=(980, 640)
             )
-            api.window = window
+            api._window = window  # tên riêng tư: pywebview không duyệt vào (xem DesktopApi)
             webview.start()
             return 0
         except Exception as exc:  # không có pywebview / WebView2: dùng trình duyệt
