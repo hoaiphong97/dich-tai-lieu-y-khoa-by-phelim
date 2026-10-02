@@ -127,7 +127,10 @@ $("#engine-pill").addEventListener("click", () => (location.hash = "#/cai-dat"))
 /* ============================ Dịch tài liệu ============================ */
 function defaultOptions() {
   const s = state.settings;
-  return { bilingual_terms: s.bilingual_terms, keep_source: s.keep_source, detect_tables: s.detect_tables };
+  return {
+    bilingual_terms: s.bilingual_terms, keep_source: s.keep_source, detect_tables: s.detect_tables,
+    output_pdf: s.output_pdf, output_md: s.output_md, pdf_interleave: s.pdf_interleave,
+  };
 }
 
 async function renderDoc() {
@@ -258,7 +261,13 @@ function renderSetup() {
         <div class="panel-body" style="border-top:1px solid var(--line);padding-top:8px;padding-bottom:8px">
           ${toggle("bilingual_terms", "Ghi kèm thuật ngữ tiếng Anh", "Lần đầu gặp trong mỗi mục: “xương hàm dưới (mandible)”", o.bilingual_terms)}
           ${toggle("keep_source", "Kèm bản gốc dưới mỗi đoạn", "Tiện đối chiếu; file Markdown sẽ dài gấp đôi", o.keep_source)}
-          ${toggle("detect_tables", "Nhận diện bảng", "Chuyển bảng trong PDF thành bảng Markdown", o.detect_tables)}
+          ${toggle("detect_tables", "Nhận diện bảng", "Dịch từng ô bảng, giữ nguyên khung bảng", o.detect_tables)}
+        </div>
+        <div class="panel-body" style="border-top:1px solid var(--line);padding-top:8px;padding-bottom:8px">
+          <div class="label" style="margin:6px 0 2px">File kết quả</div>
+          ${toggle("output_pdf", "PDF giữ bố cục, có hình", "Chữ Việt đặt vào đúng chỗ chữ gốc; hình, bảng, sơ đồ giữ nguyên", o.output_pdf)}
+          ${toggle("pdf_interleave", "Xen kẽ trang gốc trong PDF", "Mỗi trang dịch đi kèm trang gốc ngay trước nó, tiện đối chiếu", o.pdf_interleave)}
+          ${toggle("output_md", "Markdown kèm hình", "File chữ gọn để đọc, hình được cắt ra thư mục riêng", o.output_md)}
         </div>
         <div class="summary-line">
           <div class="grow" id="summary"></div>
@@ -342,7 +351,8 @@ function renderJob(job) {
   $("#top-actions").innerHTML = `<button class="btn ghost" id="new-doc">${icon("plus")} Dịch tài liệu khác</button>`;
   $("#new-doc").onclick = () => { state.jobId = null; store.set("jobId", null); state.file = null; stopPolling(); renderDoc(); };
   $("#view").innerHTML = `<div class="panel" id="job-panel"></div><div id="job-result"></div>`;
-  state.resultTab = "preview";
+  state.resultTab = null;
+  state.comparePage = 0;
   drawJob(job, true);
   if (ACTIVE.includes(job.status)) startPolling(job.id);
 }
@@ -397,7 +407,8 @@ function drawJob(job, full = false) {
       ${["error", "cancelled"].includes(job.status) ? `<button class="btn primary" id="resume">${icon("refresh")} Tiếp tục dịch</button>` : ""}
       ${job.status === "done" ? `
         <button class="btn" id="open-folder">${icon("folder")} Mở thư mục</button>
-        <a class="btn primary" href="/api/jobs/${job.id}/download">${icon("download")} Tải file .md</a>` : ""}
+        ${job.outputs?.md ? `<a class="btn${job.outputs?.pdf ? "" : " primary"}" href="/api/jobs/${job.id}/download?fmt=md">${icon("download")} Tải Markdown</a>` : ""}
+        ${job.outputs?.pdf ? `<a class="btn primary" href="/api/jobs/${job.id}/download?fmt=pdf">${icon("download")} Tải PDF</a>` : ""}` : ""}
     </div>`;
   $("#cancel")?.addEventListener("click", async () => { await api(`/api/jobs/${job.id}/cancel`, { body: {} }); toast("Đang huỷ…"); });
   $("#resume")?.addEventListener("click", async () => {
@@ -437,26 +448,52 @@ function agentBox(job) {
 async function drawResult(job) {
   const box = $("#job-result");
   const reviewCount = job.review?.length || 0;
+  const hasPdf = !!job.outputs?.pdf, hasMd = !!job.outputs?.md;
+  if (!["compare", "preview", "review", "md"].includes(state.resultTab)
+      || (state.resultTab === "compare" && !hasPdf) || (["preview", "md"].includes(state.resultTab) && !hasMd)) {
+    state.resultTab = hasPdf ? "compare" : "preview";
+  }
+  state.comparePage = state.comparePage || 0;
   box.innerHTML = `
     <div class="panel" style="margin-top:20px">
       <div class="result-tabs" id="tabs">
-        <button data-t="preview">Xem trước</button>
+        ${hasPdf ? `<button data-t="compare">So sánh trang</button>` : ""}
+        ${hasMd ? `<button data-t="preview">Xem trước Markdown</button>` : ""}
         <button data-t="review">Cần kiểm tra ${reviewCount ? `<span class="chip amber">${reviewCount}</span>` : ""}</button>
-        <button data-t="md">Markdown</button>
+        ${hasMd ? `<button data-t="md">Mã Markdown</button>` : ""}
         <span style="margin-left:auto"></span>
-        <button class="btn ghost" id="copy-md" style="margin-bottom:6px">${icon("copy")} Chép Markdown</button>
+        ${hasMd ? `<button class="btn ghost" id="copy-md" style="margin-bottom:6px">${icon("copy")} Chép Markdown</button>` : ""}
       </div>
       <div id="tab-body"></div>
     </div>`;
   $$("#tabs [data-t]").forEach((b) => (b.onclick = () => { state.resultTab = b.dataset.t; showTab(job); }));
-  $("#copy-md").onclick = async () => copyText(await api(`/api/jobs/${job.id}/markdown`));
+  $("#copy-md")?.addEventListener("click", async () => copyText(await api(`/api/jobs/${job.id}/markdown`)));
   showTab(job);
 }
 
 async function showTab(job) {
   $$("#tabs [data-t]").forEach((b) => b.classList.toggle("on", b.dataset.t === state.resultTab));
   const body = $("#tab-body");
-  if (state.resultTab === "preview") {
+  if (state.resultTab === "compare") {
+    const total = (job.page_list || []).length || 1;
+    const draw = () => {
+      const i = state.comparePage = Math.max(0, Math.min(total - 1, state.comparePage));
+      const page = (job.page_list || [])[i] ?? i + 1;
+      body.innerHTML = `
+        <div class="compare-bar">
+          <button class="btn" id="pg-prev" ${i === 0 ? "disabled" : ""}>‹ Trang trước</button>
+          <span>Trang <b>${page}</b> <span class="muted">(${i + 1}/${total})</span></span>
+          <button class="btn" id="pg-next" ${i >= total - 1 ? "disabled" : ""}>Trang sau ›</button>
+        </div>
+        <div class="compare">
+          <figure><figcaption>Bản gốc</figcaption><img alt="Trang gốc ${page}" src="/api/jobs/${job.id}/page?side=src&i=${i}"></figure>
+          <figure><figcaption>Bản dịch</figcaption><img alt="Trang dịch ${page}" src="/api/jobs/${job.id}/page?side=dst&i=${i}"></figure>
+        </div>`;
+      $("#pg-prev").onclick = () => { state.comparePage--; draw(); };
+      $("#pg-next").onclick = () => { state.comparePage++; draw(); };
+    };
+    draw();
+  } else if (state.resultTab === "preview") {
     let html = await api(`/api/jobs/${job.id}/preview`);
     html = html.replace(/<!-- Trang (\d+) -->/g, '<div class="pgmark"><span class="pg">tr. $1</span></div>')
       .replace(/<!-- ⚠ Cần kiểm tra: (.*?) -->/g, (_, t) => `<div class="flag">⚠ ${t}</div>`);
@@ -692,7 +729,10 @@ function renderSettings() {
           <div class="panel-body" style="padding-top:6px;padding-bottom:6px">
             ${toggle("bilingual_terms", "Ghi kèm thuật ngữ tiếng Anh", "Lần đầu gặp trong mỗi mục: “xương hàm dưới (mandible)”", s.bilingual_terms)}
             ${toggle("keep_source", "Kèm bản gốc dưới mỗi đoạn", "Tiện đối chiếu khi học", s.keep_source)}
-            ${toggle("detect_tables", "Nhận diện bảng", "Chuyển bảng trong PDF thành bảng Markdown", s.detect_tables)}
+            ${toggle("detect_tables", "Nhận diện bảng", "Dịch từng ô bảng, giữ nguyên khung bảng", s.detect_tables)}
+            ${toggle("output_pdf", "Xuất PDF giữ bố cục, có hình", "Chữ Việt đặt vào đúng chỗ chữ gốc; hình giữ nguyên", s.output_pdf)}
+            ${toggle("pdf_interleave", "Xen kẽ trang gốc trong PDF", "Mỗi trang dịch đi kèm trang gốc", s.pdf_interleave)}
+            ${toggle("output_md", "Xuất Markdown kèm hình", "Hình được cắt ra thư mục riêng cạnh file .md", s.output_md)}
           </div>
           <div class="panel-body" style="border-top:1px solid var(--line)">
             <div class="field"><label>Thư mục lưu file kết quả</label>
@@ -737,7 +777,7 @@ function renderSettings() {
     const v = { ...s };
     const key = $("#api_key");
     v.api_key = key ? key.value : "";
-    ["bilingual_terms", "keep_source", "detect_tables"].forEach((n) => (v[n] = $(`[name="${n}"]`).checked));
+    ["bilingual_terms", "keep_source", "detect_tables", "output_pdf", "output_md", "pdf_interleave"].forEach((n) => (v[n] = $(`[name="${n}"]`).checked));
     v.output_dir = $("#output_dir").value;
     return v;
   };

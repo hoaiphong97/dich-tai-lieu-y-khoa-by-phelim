@@ -2,7 +2,7 @@
 
 <h1 align="center">Dịch Tài Liệu Y Khoa</h1>
 
-<p align="center">App cài trên Windows và macOS: dịch tài liệu y khoa PDF tiếng Anh thành file <b>Markdown tiếng Việt</b> dễ đọc.<br>
+<p align="center">App cài trên Windows và macOS: dịch tài liệu y khoa PDF tiếng Anh sang tiếng Việt — ra <b>PDF giữ nguyên bố cục và hình</b>, kèm <b>Markdown có hình</b> để đọc gọn.<br>
 Chạy được hoàn toàn miễn phí trên máy (Ollama, LM Studio), hoặc qua Gemini API, hoặc giao cho agent như Claude Code.</p>
 
 ---
@@ -13,7 +13,9 @@ Chạy được hoàn toàn miễn phí trên máy (Ollama, LM Studio), hoặc q
   - **Toàn bộ tài liệu**
   - **Khoảng trang**: `từ trang 10 đến 25`, hoặc nhiều khoảng `1-10, 15, 20-25`. Có thể **chọn theo chương** nếu PDF có mục lục.
   - **Dịch nhanh**: dán một đoạn văn, dịch ngay.
-- **Xuất Markdown gọn**: giữ tiêu đề, danh sách, chú thích hình và bảng; bỏ header/footer và số trang; nối lại câu bị cắt qua cột hoặc qua trang, nối từ bị ngắt gạch nối.
+- **PDF giữ bố cục, có hình**: chữ tiếng Việt được đặt vào đúng chỗ chữ gốc (tự co cỡ chữ cho vừa); hình ảnh, sơ đồ, nền màu, khung bảng giữ nguyên. Nhãn chữ trong sơ đồ cũng được dịch tại chỗ. Tuỳ chọn xen kẽ trang gốc để đối chiếu.
+- **Markdown kèm hình**: giữ tiêu đề, danh sách, chú thích và bảng; hình được cắt ra thư mục riêng (`hinh-<tên>/`, nhãn trong hình đã dịch). Bỏ header/footer và số trang; nối lại câu bị cắt qua cột hoặc qua trang.
+- **So sánh trang**: xem trang gốc và trang dịch cạnh nhau ngay trong app.
 - **Dịch có ngữ cảnh**: mỗi đoạn được gửi kèm tên mục và đoạn trước đó, để model hiểu đúng "it", "this"…
 - **Kho thuật ngữ**: thuật ngữ trong kho được đưa cho model dùng đúng. Tuỳ chọn ghi kèm tiếng Anh ở lần đầu xuất hiện trong mỗi mục, ví dụ `xương hàm dưới (mandible)`. Bạn tự thêm, sửa và duyệt thuật ngữ trong app.
 - **Tự kiểm lỗi**: đánh dấu đoạn thiếu số liệu, sót câu tiếng Anh, dịch ngắn hoặc dài bất thường, sai thuật ngữ đã duyệt, để bạn xem lại.
@@ -48,7 +50,7 @@ Cách chọn tốt nhất là dán cùng một đoạn vào **Dịch nhanh**, th
 
 ### Dữ liệu được lưu ở đâu
 
-- File kết quả `.md`: mặc định trong `Documents/DichYKhoa` (đổi được trong Cài đặt).
+- File kết quả `.vi.pdf`, `.vi.md` và thư mục hình `hinh-…/`: mặc định trong `Documents/DichYKhoa` (đổi được trong Cài đặt).
 - Cài đặt, bộ nhớ đệm, lịch sử, thuật ngữ của bạn:
   - Windows: `%APPDATA%\DichYKhoa`
   - macOS: `~/Library/Application Support/DichYKhoa`
@@ -57,6 +59,8 @@ Cách chọn tốt nhất là dán cùng một đoạn vào **Dịch nhanh**, th
 
 - **PDF scan (ảnh chụp)** chưa đọc được chữ, vì chưa có OCR. App sẽ báo các trang này.
 - Bố cục phức tạp (3 cột, hộp chữ đặt chồng lên nhau, bảng không có đường kẻ) có thể bị xếp sai thứ tự đoạn.
+- Trong PDF, chữ dùng font Noto Sans (không giữ font gốc của sách). Tiếng Việt thường dài hơn tiếng Anh nên chữ có thể nhỏ hơn bản gốc; khi quá chật, chữ được nới xuống khoảng trống bên dưới.
+- Header/footer lặp lại (tên sách, số trang) được giữ nguyên tiếng Anh trong PDF.
 - **Thuật ngữ đi kèm app đang ở trạng thái "Nháp"** và cần người có chuyên môn duyệt. Bản dịch máy luôn cần đối chiếu bản gốc trước khi dùng cho mục đích chuyên môn.
 
 ---
@@ -89,6 +93,7 @@ python -m pytest -q tests         # chạy test
 dichyk/
   extract.py     PDF → khối (tiêu đề, đoạn, danh sách, chú thích, bảng), thứ tự đọc 2 cột, bỏ header/footer
   pipeline.py    khối → đoạn cần dịch (ngữ cảnh, thuật ngữ) → bản dịch → Markdown; chế độ agent
+  pdfout.py      đặt bản dịch vào PDF gốc (giữ hình), cắt hình cho Markdown, ảnh trang để so sánh
   glossary.py    kho thuật ngữ TSV + bộ khớp (cụm dài nhất, số nhiều, viết tắt)
   engines.py     Ollama, API tương thích OpenAI
   prompts.py     prompt dịch

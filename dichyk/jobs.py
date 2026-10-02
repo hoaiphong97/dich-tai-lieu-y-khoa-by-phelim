@@ -12,7 +12,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-from . import extract, paths, pipeline
+from . import extract, paths, pdfout, pipeline
 from . import settings as settings_mod
 from .cache import TranslationCache
 from .engines import EngineError, make_engine
@@ -53,6 +53,8 @@ class Job:
         self.last_text: str = data.get("last_text", "")
         self.eta: int = data.get("eta", 0)
         self.output_path: str = data.get("output_path", "")
+        self.outputs: dict = data.get("outputs") or ({"md": self.output_path} if self.output_path else {})
+        self.page_list: list = data.get("page_list", [])
         self.error: str = data.get("error", "")
         self.text_input: str = data.get("text_input", "")
         self.cancel_event = threading.Event()
@@ -182,6 +184,7 @@ class JobManager:
             if job.type == "pdf":
                 info = extract.pdf_info(job.file_path)
                 pages = extract.parse_page_range(job.pages_spec, info.pages)
+                job.page_list = pages
 
                 def on_page(done, total):
                     job.phase = f"Đang đọc trang {done}/{total}"
@@ -275,8 +278,8 @@ class JobManager:
         return job
 
     def _finish(self, job: Job, blocks, segments, keep_source: bool) -> None:
-        markdown = pipeline.render_markdown(
-            blocks, segments,
+        conf = settings_mod.load()
+        render = dict(
             title=job.title if job.type == "pdf" else "Bản dịch",
             source_name=job.file_name if job.type == "pdf" else "",
             scope=job.scope if job.type == "pdf" else "",
@@ -284,26 +287,67 @@ class JobManager:
             keep_source=keep_source,
             header=job.type == "pdf",
         )
-        if job.type == "pdf":
-            out_dir = Path(settings_mod.load()["output_dir"])
-            out_dir.mkdir(parents=True, exist_ok=True)
-            stem = _safe_name(Path(job.file_name).stem)
-            suffix = "" if job.scope == "Toàn bộ tài liệu" else "_" + _safe_name(job.scope.replace("Trang ", "tr").replace(", ", "_").replace("–", "-"))[:60]
-            target = Path(job.output_path) if job.output_path else out_dir / f"{stem}{suffix}.vi.md"
-            if not job.output_path:
-                n = 2
-                while target.exists():
-                    target = out_dir / f"{stem}{suffix} ({n}).vi.md"
-                    n += 1
-        else:
-            target = job.dir / "result.md"
-        target.write_text(markdown, encoding="utf-8")
         (job.dir / "review.json").write_text(
             json.dumps(pipeline.review_items(segments), ensure_ascii=False, indent=1), encoding="utf-8"
         )
-        job.output_path = str(target)
         job.flagged = sum(1 for s in segments if s.flags)
+
+        if job.type != "pdf":
+            target = job.dir / "result.md"
+            target.write_text(pipeline.render_markdown(blocks, segments, **render), encoding="utf-8")
+            job.outputs = {"md": str(target)}
+            job.output_path = str(target)
+            job.status = "done"
+            return
+
+        want_pdf = bool(job.options.get("output_pdf", conf["output_pdf"]))
+        want_md = bool(job.options.get("output_md", conf["output_md"])) or not want_pdf
+        base = self._output_base(job, Path(conf["output_dir"]))
+        outputs: dict[str, str] = {}
+        pages = job.page_list or sorted({b.page for b in blocks})
+        if want_pdf:
+            pdf_path = base.with_name(base.name + ".vi.pdf")
+            interleave = bool(job.options.get("pdf_interleave", conf["pdf_interleave"]))
+
+            def on_page(done, total):
+                job.phase = f"Đang tạo PDF trang {done}/{total}"
+
+            pdfout.render_pdf(
+                job.file_path, pages, blocks, segments, pdf_path, interleave=interleave, progress=on_page,
+            )
+            outputs["pdf"] = str(pdf_path)
+        if want_md:
+            md_path = base.with_name(base.name + ".vi.md")
+            figure_dir = base.with_name("hinh-" + pdfout.slug(base.name))
+            job.phase = "Đang cắt hình cho Markdown"
+            if want_pdf:  # cắt hình từ PDF đã dịch: nhãn chữ trong hình là tiếng Việt
+                index = {p: (2 * i + 1 if interleave else i) for i, p in enumerate(pages)}
+                names = pdfout.export_figures(pdf_path, blocks, figure_dir, page_index=index)
+            else:
+                names = pdfout.export_figures(job.file_path, blocks, figure_dir)
+            links = {i: f"{figure_dir.name}/{n}" for i, n in names.items()}
+            md_path.write_text(pipeline.render_markdown(blocks, segments, figure_links=links, **render), encoding="utf-8")
+            outputs["md"] = str(md_path)
+        job.outputs = outputs
+        job.output_path = outputs.get("pdf") or outputs.get("md", "")
         job.status = "done"
+
+    @staticmethod
+    def _output_base(job: Job, out_dir: Path) -> Path:
+        """Tên file kết quả (chưa có đuôi). Dịch lại cùng job thì ghi đè; job mới thì không đè file cũ."""
+        if job.outputs:
+            first = Path(next(iter(job.outputs.values())))
+            return first.with_name(first.name.split(".vi.")[0])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stem = _safe_name(Path(job.file_name).stem)
+        suffix = "" if job.scope == "Toàn bộ tài liệu" else "_" + _safe_name(
+            job.scope.replace("Trang ", "tr").replace(", ", "_").replace("–", "-")
+        )[:60]
+        base, n = out_dir / f"{stem}{suffix}", 2
+        while any(base.with_name(base.name + ext).exists() for ext in (".vi.md", ".vi.pdf")):
+            base = out_dir / f"{stem}{suffix} ({n})"
+            n += 1
+        return base
 
 
 def _describe_pages(pages: list[int]) -> str:

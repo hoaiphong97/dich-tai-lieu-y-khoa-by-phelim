@@ -43,7 +43,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install pymupdf fastapi uvicorn python-multipart httpx markdown pytest
+      - run: pip install pymupdf pymupdf-fonts fastapi uvicorn python-multipart httpx markdown pytest
       - run: python -m pytest -q tests
 
   windows:

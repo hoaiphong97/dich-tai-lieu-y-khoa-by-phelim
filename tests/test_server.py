@@ -55,7 +55,13 @@ def test_upload_range_and_agent_flow(client, tmp_path):
     assert job["status"] == "waiting_agent" and job["scope"] == "Trang 3"
 
     done = client.post(f"/api/jobs/{job['id']}/assemble").json()
-    assert done["status"] == "done" and done["output_path"].endswith("book_tr3.vi.md")
+    assert done["status"] == "done"
+    assert done["outputs"]["md"].endswith("book_tr3.vi.md") and done["outputs"]["pdf"].endswith("book_tr3.vi.pdf")
+    assert client.get(f"/api/jobs/{job['id']}/download?fmt=pdf").content[:4] == b"%PDF"
+    for side in ("src", "dst"):
+        page = client.get(f"/api/jobs/{job['id']}/page?side={side}&i=0")
+        assert page.status_code == 200 and page.content[:4] == b"\x89PNG"
+    assert client.get(f"/api/jobs/{job['id']}/asset?path=../../etc/passwd").status_code == 404
     md = client.get(f"/api/jobs/{job['id']}/markdown").text
     assert "Occlusal Forces" in md  # agent chưa dịch → giữ nguyên bản gốc
     preview = client.get(f"/api/jobs/{job['id']}/preview").text

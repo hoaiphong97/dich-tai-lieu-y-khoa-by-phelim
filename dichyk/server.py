@@ -7,17 +7,18 @@ import os
 import re
 import secrets
 import shutil
+from urllib.parse import quote
 import subprocess
 import sys
 from pathlib import Path
 
 import markdown as md_lib
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import extract, paths
+from . import extract, paths, pdfout
 from . import settings as settings_mod
 from .engines import EngineError, make_engine
 from .jobs import JobManager
@@ -237,9 +238,10 @@ def assemble_job(job_id: str):
         _bad(str(exc))
 
 
-def _output(job_id: str) -> Path:
+def _output(job_id: str, fmt: str = "md") -> Path:
     job = _job(job_id)
-    path = Path(job.output_path) if job.output_path else None
+    value = job.outputs.get(fmt) or (job.output_path if job.output_path.endswith("." + fmt) else "")
+    path = Path(value) if value else None
     if not path or not path.is_file():
         _bad("Chưa có file kết quả", 404)
     return path
@@ -247,12 +249,46 @@ def _output(job_id: str) -> Path:
 
 @app.get("/api/jobs/{job_id}/markdown", response_class=PlainTextResponse)
 def job_markdown(job_id: str):
-    return _output(job_id).read_text(encoding="utf-8")
+    return _output(job_id, "md").read_text(encoding="utf-8")
+
+
+@app.get("/api/jobs/{job_id}/pdf")
+def job_pdf(job_id: str):
+    path = _output(job_id, "pdf")
+    return FileResponse(path, media_type="application/pdf", content_disposition_type="inline", filename=path.name)
+
+
+@app.get("/api/jobs/{job_id}/asset")
+def job_asset(job_id: str, path: str):
+    """Ảnh mà file Markdown tham chiếu (chỉ trong thư mục chứa file .md)."""
+    root = _output(job_id, "md").parent.resolve()
+    target = (root / path).resolve()
+    if root not in target.parents or not target.is_file() or target.suffix.lower() != ".png":
+        _bad("Không tìm thấy ảnh", 404)
+    return FileResponse(target, media_type="image/png")
+
+
+@app.get("/api/jobs/{job_id}/page")
+def job_page(job_id: str, side: str = "dst", i: int = 0):
+    """Ảnh trang thứ i (trong phạm vi đã dịch) của bản gốc hoặc bản dịch, để so sánh."""
+    job = _job(job_id)
+    pages = job.page_list or []
+    if not pages:
+        _bad("Job không có danh sách trang", 404)
+    i = max(0, min(i, len(pages) - 1))
+    if side == "src":
+        if not Path(job.file_path).is_file():
+            _bad("Không còn file PDF gốc", 404)
+        png = pdfout.render_page_png(job.file_path, pages[i] - 1)
+    else:
+        interleave = bool(job.options.get("pdf_interleave", settings_mod.load()["pdf_interleave"]))
+        png = pdfout.render_page_png(_output(job_id, "pdf"), 2 * i + 1 if interleave else i)
+    return Response(png, media_type="image/png", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/jobs/{job_id}/preview", response_class=HTMLResponse)
 def job_preview(job_id: str):
-    text = _output(job_id).read_text(encoding="utf-8")
+    text = _output(job_id, "md").read_text(encoding="utf-8")
     # Chỉ giữ lại chú thích của app (dấu trang, cảnh báo); mọi thẻ HTML khác từ bản dịch bị vô hiệu.
     keep: list[str] = []
 
@@ -263,13 +299,19 @@ def job_preview(job_id: str):
     text = re.sub(r"<!-- (?:Trang \d+|⚠ Cần kiểm tra: .*?) -->", stash, text)
     text = text.replace("&", "&amp;").replace("<", "&lt;")
     html = md_lib.markdown(text, extensions=["tables", "sane_lists"])
+    html = re.sub(
+        r'<img alt="([^"]*)" src="([^"]+)"',
+        lambda m: f'<img alt="{m.group(1)}" loading="lazy" src="/api/jobs/{job_id}/asset?path={quote(m.group(2))}"',
+        html,
+    )
     return re.sub(r"(?:<p>)?DYKKEEP(\d+)DYKKEEP(?:</p>)?", lambda m: keep[int(m.group(1))], html)
 
 
 @app.get("/api/jobs/{job_id}/download")
-def job_download(job_id: str):
-    path = _output(job_id)
-    return FileResponse(path, media_type="text/markdown; charset=utf-8", filename=path.name)
+def job_download(job_id: str, fmt: str = "md"):
+    path = _output(job_id, "pdf" if fmt == "pdf" else "md")
+    media = "application/pdf" if fmt == "pdf" else "text/markdown; charset=utf-8"
+    return FileResponse(path, media_type=media, filename=path.name)
 
 
 @app.post("/api/jobs/{job_id}/open-folder")

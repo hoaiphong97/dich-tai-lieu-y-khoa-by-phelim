@@ -1,4 +1,5 @@
 pymupdf>=1.25,<2
+pymupdf-fonts>=1.0.5
 fastapi>=0.110,<1
 uvicorn>=0.29,<1
 python-multipart>=0.0.9

@@ -111,15 +111,15 @@ def build_segments(blocks: list[Block], glossary: Glossary | None, bilingual: bo
                         )
             continue
 
-        if block.kind == "note" and block.text.startswith("[Trang "):
-            continue  # ghi chú của app (trang scan), không dịch
+        if block.kind == "figure" or (block.kind == "note" and block.text.startswith("[Trang ")):
+            continue  # hình, hoặc ghi chú của app: không dịch
 
         segments.append(
             Segment(
                 len(segments), index, block.kind, block.text, block.page,
                 section=section if block.kind != "heading" else " > ".join(h[1] for h in headings[:-1]),
                 previous=previous if block.kind in ("para", "list", "note") else "",
-                terms=terms_for(block.text, mark_seen=True),
+                terms=terms_for(block.text, mark_seen=block.kind != "label"),
             )
         )
         if block.kind in ("para", "list"):
@@ -175,7 +175,7 @@ def translate_one(engine: Engine, cache: TranslationCache | None, segment: Segme
 def _finish(engine: Engine, segment: Segment, dst: str) -> str:
     if segment.kind == "list":
         dst = _translate_list(engine, segment, dst)
-    elif segment.kind in ("heading", "caption", "cell"):
+    elif segment.kind in ("heading", "caption", "cell", "label"):
         dst = " ".join(dst.split())
     return validate.fix_references(dst)
 
@@ -242,7 +242,10 @@ def render_markdown(
     engine_desc: str = "",
     keep_source: bool = False,
     header: bool = True,
+    figure_links: dict[int, str] | None = None,
 ) -> str:
+    """figure_links: {chỉ số khối hình: đường dẫn ảnh tương đối so với file .md}."""
+    figure_links = figure_links or {}
     by_block: dict[int, Segment] = {}
     cells: dict[int, dict[str, str]] = {}
     for s in segments:
@@ -278,6 +281,16 @@ def render_markdown(
             lines += ["| " + " | ".join(r) + " |" for r in rows[1:]]
             out.append("\n".join(lines))
             continue
+        if block.kind == "figure":
+            link = figure_links.get(index)
+            if block.text == "scan":
+                out.append(f"> *Trang {block.page} là ảnh scan — chưa đọc được chữ (OCR), giữ nguyên ảnh trang.*")
+            if link:
+                alt = f"Trang {block.page}" if block.text == "scan" else f"Hình — trang {block.page}"
+                out.append(f"![{alt}]({link})")
+            continue
+        if block.kind == "label":
+            continue  # nhãn chữ nằm trong hình: đã có trong ảnh
         segment = by_block.get(index)
         if segment is None:
             if block.kind == "note":

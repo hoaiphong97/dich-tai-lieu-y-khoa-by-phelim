@@ -260,3 +260,12 @@ table.data tr.click:hover td { background: #fcfbf8; }
   .page-sheet { padding: 28px 22px; }
   .preview-wrap { padding: 1px 8px; }
 }
+
+/* ---------- So sánh trang gốc / bản dịch ---------- */
+.compare-bar { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 12px; border-bottom: 1px solid var(--line); background: #fcfbf8; }
+.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; padding: 18px; background: var(--sunken); max-height: calc(100vh - 230px); overflow: auto; }
+.compare figure { margin: 0; }
+.compare figcaption { font-size: 12px; font-weight: 650; color: var(--ink-3); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 6px; }
+.compare img { width: 100%; display: block; background: #fff; border: 1px solid var(--line); box-shadow: 0 2px 14px rgba(22, 32, 46, .08); }
+.page-sheet img { max-width: 100%; display: block; margin: 10px auto; border: 1px solid var(--line); }
+@media (max-width: 900px) { .compare { grid-template-columns: 1fr; } }

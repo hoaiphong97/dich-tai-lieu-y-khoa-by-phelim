@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-PROMPT_VERSION = "1"
+PROMPT_VERSION = "2"
 
 SYSTEM = """You are an expert medical translator. Translate English medical and scientific text into Vietnamese for a Vietnamese medical textbook.
 
@@ -21,6 +21,7 @@ KIND_HINT = {
     "list": "This is a bulleted list. Keep exactly one output line per input line, in the same order.",
     "cell": "This is a single table cell. Translate it briefly; keep numbers and symbols unchanged.",
     "note": "This is a side note or footnote.",
+    "label": "This is a short label printed inside a figure. Translate it as briefly as possible.",
     "para": "",
 }
 

@@ -13,7 +13,8 @@ APP_VERSION = re.search(r'APP_VERSION = "(.+?)"', (ROOT / "dichyk" / "paths.py")
 ICON_WIN = str(ROOT / "packaging" / "icon.ico")
 ICON_MAC = str(ROOT / "packaging" / "icon.icns")
 
-hidden = collect_submodules("uvicorn") + ["webview", "multipart"]
+# pymupdf_fonts nạp font (Noto Sans có dấu tiếng Việt) bằng import động nên phải khai báo tay
+hidden = collect_submodules("uvicorn") + collect_submodules("pymupdf_fonts") + ["webview", "multipart"]
 if sys.platform == "win32":
     hidden += ["clr", "webview.platforms.edgechromium", "webview.platforms.winforms"]
 elif sys.platform == "darwin":
