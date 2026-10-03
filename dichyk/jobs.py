@@ -13,7 +13,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-from . import extract, paths, pdfout, pipeline
+from . import extract, figtext, paths, pdfout, pipeline
 from . import settings as settings_mod
 from .cache import TranslationCache
 from .engines import EngineError, make_engine
@@ -218,9 +218,19 @@ class JobManager:
 
             # 2a. Chế độ agent: xuất file rồi chờ
             if agent_mode:
+                figures = []
+                if job.type == "pdf" and _figure_text(job, conf):
+                    def on_figure(done, total):
+                        job.phase = f"Đang xuất ảnh hình cho agent đọc chữ {done}/{total}"
+
+                    figures = figtext.export_images(
+                        job.file_path, blocks, job.dir, progress=on_figure, cancelled=job.cancel_event.is_set,
+                    )
+                    if job.cancel_event.is_set():
+                        raise pipeline.Cancelled()
                 tasks = pipeline.export_agent_task(
                     job.dir, segments, source=job.file_name or "văn bản dán vào", scope=job.scope,
-                    parts=int(conf.get("agent_parts", 1)),
+                    parts=int(conf.get("agent_parts", 1)), figures=figures,
                 )
                 job.agent_parts = len(tasks)
                 job.status = "waiting_agent"
@@ -236,6 +246,7 @@ class JobManager:
                 renderer = PartRenderer(
                     job, blocks, segments, job.page_list,
                     interleave=bool(job.options.get("pdf_interleave", conf["pdf_interleave"])),
+                    figure_notes=_figure_text(job, conf),
                 )
             job.save()
             translated_fresh = 0
@@ -310,6 +321,12 @@ class JobManager:
             missing = pipeline.load_agent_translations(job.dir, segments)
             job.done, job.total = len(segments) - missing, len(segments)
             job.flagged = sum(1 for s in segments if s.flags)
+            texts, figures_unread = None, 0
+            if _figure_text(job, conf):
+                agent_items, read = figtext.load_agent(job.dir)
+                texts = figtext.collect(blocks, segments, agent_items)
+                if (job.dir / figtext.IMAGE_DIR).is_dir():  # job có xuất ảnh hình cho agent đọc
+                    figures_unread = sum(1 for i, _ in figtext.figures(blocks) if i not in read)
             parts = None
             if job.type == "pdf" and bool(job.options.get("output_pdf", conf["output_pdf"])):
                 job.page_list = job.page_list or sorted({b.page for b in blocks})
@@ -326,7 +343,7 @@ class JobManager:
                 renderer = PartRenderer(
                     job, blocks, segments, job.page_list,
                     interleave=bool(job.options.get("pdf_interleave", conf["pdf_interleave"])),
-                    on_page=on_page,
+                    on_page=on_page, figure_texts=texts,
                 )
                 job.save()
                 while renderer.render_next():
@@ -334,12 +351,17 @@ class JobManager:
                     if job.cancel_event.is_set():
                         raise pipeline.Cancelled()
                 parts = renderer.parts
-            self._finish(job, blocks, segments, bool(job.options.get("keep_source", conf["keep_source"])), parts=parts)
-            took = _fmt_duration(time.monotonic() - started)
-            job.phase = (
-                f"Đã ghép trong {took} — còn {missing} đoạn agent chưa dịch (giữ nguyên tiếng Anh)"
-                if missing else f"Đã ghép xong trong {took}"
+            self._finish(
+                job, blocks, segments, bool(job.options.get("keep_source", conf["keep_source"])),
+                parts=parts, figure_texts=texts,
             )
+            took = _fmt_duration(time.monotonic() - started)
+            left = [
+                f"{missing} đoạn agent chưa dịch (giữ nguyên tiếng Anh)" if missing else "",
+                f"{figures_unread} hình agent chưa đọc chữ" if figures_unread else "",
+            ]
+            left = [x for x in left if x]
+            job.phase = f"Đã ghép trong {took} — còn {' và '.join(left)}" if left else f"Đã ghép xong trong {took}"
             job.finished = _now()
         except pipeline.Cancelled:
             job.status, job.phase = "waiting_agent", "Đã huỷ ghép"
@@ -359,8 +381,11 @@ class JobManager:
         job.pdf_parts, job.pdf_pages_ready = [], 0
         shutil.rmtree(folder, ignore_errors=True)
 
-    def _finish(self, job: Job, blocks, segments, keep_source: bool, parts: list | None = None) -> None:
+    def _finish(self, job: Job, blocks, segments, keep_source: bool, parts: list | None = None,
+                figure_texts: dict | None = None) -> None:
         conf = settings_mod.load()
+        if figure_texts is None and job.type == "pdf" and _figure_text(job, conf):
+            figure_texts = figtext.collect(blocks, segments)  # nhãn chữ dạng ký tự đã dịch
         render = dict(
             title=job.title if job.type == "pdf" else "Bản dịch",
             source_name=job.file_name if job.type == "pdf" else "",
@@ -405,6 +430,7 @@ class JobManager:
             else:
                 pdfout.render_pdf(
                     job.file_path, pages, blocks, segments, pdf_path, interleave=interleave, progress=on_page,
+                    notes=figtext.pdf_notes(blocks, figure_texts or {}, pages),
                 )
             job.pdf_pages_ready = len(pages)
             outputs["pdf"] = str(pdf_path)
@@ -427,7 +453,10 @@ class JobManager:
                 names = pdfout.export_figures(job.file_path, blocks, figure_dir, progress=on_figure)
             job.phase = "Đang ghi file Markdown"
             links = {i: f"{figure_dir.name}/{n}" for i, n in names.items()}
-            md_path.write_text(pipeline.render_markdown(blocks, segments, figure_links=links, **render), encoding="utf-8")
+            md_path.write_text(
+                pipeline.render_markdown(blocks, segments, figure_links=links, figure_texts=figure_texts, **render),
+                encoding="utf-8",
+            )
             outputs["md"] = str(md_path)
         job.outputs = outputs
         job.output_path = outputs.get("pdf") or outputs.get("md", "")
@@ -458,9 +487,13 @@ class PartRenderer:
     Lô được làm theo đúng thứ tự trang để ghép cuối cùng chỉ là nối các file.
     """
 
-    def __init__(self, job: Job, blocks, segments, pages: list[int], *, interleave: bool, on_page=None):
+    def __init__(self, job: Job, blocks, segments, pages: list[int], *, interleave: bool, on_page=None,
+                 figure_texts: dict | None = None, figure_notes: bool = False):
+        """figure_texts: danh sách chữ trong hình đã có sẵn (lúc ghép bản dịch agent).
+        figure_notes: chưa có sẵn thì gom từ nhãn đã dịch ngay lúc đặt chữ cho từng lô (lúc dịch bằng model)."""
         self.job, self.blocks, self.segments, self.interleave = job, blocks, segments, interleave
         self.on_page = on_page
+        self.figure_texts, self.figure_notes = figure_texts, figure_notes
         self.batches = pdfout.batches(pages)
         self.folder = job.dir / "pdf_parts"
         shutil.rmtree(self.folder, ignore_errors=True)
@@ -494,15 +527,23 @@ class PartRenderer:
             return False
         chunk = self.batches[self.next]
         target = self.folder / f"part_{self.next:04d}.pdf"
+        texts = self.figure_texts
+        if texts is None and self.figure_notes:
+            texts = figtext.collect(self.blocks, self.segments)
         pdfout.render_part(
             self.job.file_path, chunk, self.blocks, self.segments, target,
             interleave=self.interleave, on_page=self.on_page,
+            notes=figtext.pdf_notes(self.blocks, texts, chunk) if texts else None,
         )
         self.parts.append(str(target))
         self.job.pdf_parts.append([str(target), chunk])
         self.job.pdf_pages_ready += len(chunk)
         self.next += 1
         return True
+
+
+def _figure_text(job: Job, conf: dict) -> bool:
+    return bool(job.options.get("figure_text", conf.get("figure_text", True)))
 
 
 def _describe_pages(pages: list[int]) -> str:

@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from . import prompts, validate
+from . import figtext, prompts, validate
 from .cache import TranslationCache
 from .engines import Engine, EngineError
 from .extract import Block
@@ -243,9 +243,12 @@ def render_markdown(
     keep_source: bool = False,
     header: bool = True,
     figure_links: dict[int, str] | None = None,
+    figure_texts: dict[int, list[tuple[str, str]]] | None = None,
 ) -> str:
-    """figure_links: {chỉ số khối hình: đường dẫn ảnh tương đối so với file .md}."""
+    """figure_links: {chỉ số khối hình: đường dẫn ảnh tương đối so với file .md}.
+    figure_texts: {chỉ số khối hình: [(Anh, Việt)]} — chữ trong hình, liệt kê ngay dưới ảnh."""
     figure_links = figure_links or {}
+    figure_texts = figure_texts or {}
     by_block: dict[int, Segment] = {}
     cells: dict[int, dict[str, str]] = {}
     for s in segments:
@@ -288,6 +291,8 @@ def render_markdown(
             if link:
                 alt = f"Trang {block.page}" if block.text == "scan" else f"Hình — trang {block.page}"
                 out.append(f"![{alt}]({link})")
+            if figure_texts.get(index):
+                out.append(figtext.markdown(figure_texts[index]))
             continue
         if block.kind == "label":
             continue  # nhãn chữ nằm trong hình: đã có trong ảnh
@@ -337,8 +342,8 @@ Thư mục này chứa một job dịch tài liệu y khoa Anh → Việt, xuấ
 2. Dịch `src` sang tiếng Việt theo quy tắc bên dưới. `section` và `previous` chỉ để hiểu ngữ cảnh, không dịch.
 3. Ghi kết quả vào `{out_file}`, mỗi dòng: `{{"id": <id>, "dst": "<bản dịch>"}}`.
    Có thể ghi dần theo lô (ví dụ 30–50 đoạn một lần) và ghi tiếp vào cuối file.
-4. Dịch xong, báo người dùng bấm **"Ghép bản dịch"** trong app. App sẽ kiểm lỗi và xuất file Markdown.
-
+4. Dịch xong{figure_done}, báo người dùng bấm **"Ghép bản dịch"** trong app. App sẽ kiểm lỗi và xuất file PDF/Markdown.
+{figure_section}
 ## Quy tắc dịch
 {rules}
 
@@ -351,26 +356,53 @@ Thư mục này chứa một job dịch tài liệu y khoa Anh → Việt, xuấ
 ## Thông tin job
 - Tài liệu: {source}
 - Phạm vi: {scope}
-- Số đoạn: {count}
+- Số đoạn: {count}{figure_count}
 """
+
+FIGURE_SECTION = """
+## Chữ trong hình (làm sau khi dịch xong các đoạn)
+App chưa dịch được chữ nằm trong ảnh, nên cần agent đọc giúp để liệt kê Anh → Việt ngay dưới mỗi hình.
+Thư mục `{image_dir}/` chứa ảnh các hình; `{fig_file}` liệt kê {fig_count} hình của phần này, mỗi dòng:
+`{{"figure", "page", "image", "known"}}`.
+1. Mở từng ảnh (`image`) và đọc mọi chữ in trong hình: nhãn chú thích, tên cấu trúc, chú giải, tiêu đề trục…
+2. Bỏ qua: chữ đã có trong `known` (app đã đọc và dịch), chữ cái/số đánh dấu (A, B, 1, 2…), số đo đơn thuần.
+3. Ghi vào `{fig_out}`, mỗi hình một dòng, theo thứ tự đọc trong hình:
+   `{{"figure": "fig-0012", "items": [{{"en": "Mandible", "vi": "Xương hàm dưới"}}]}}`
+   Hình không có chữ cần ghi: `"items": []`. Dịch theo cùng quy tắc và thuật ngữ như phần đoạn văn.
+   Có thể ghi dần, vài hình một lần, ghi tiếp vào cuối file.
+"""
+
+
+def _split_figures(figures: list[dict], chunks: list[list[Segment]]) -> list[list[dict]]:
+    """Chia hình theo trang cho khớp phần đoạn văn của từng agent."""
+    out: list[list[dict]] = [[] for _ in chunks]
+    bounds = [chunk[-1].page if chunk else 0 for chunk in chunks]
+    for fig in figures:
+        k = next((k for k, last in enumerate(bounds) if fig["page"] <= last), len(chunks) - 1)
+        out[k].append(fig)
+    return out
 
 
 def export_agent_task(
     job_dir: Path, segments: list[Segment], *, source: str, scope: str, parts: int = 1,
+    figures: list[dict] | None = None,
 ) -> list[Path]:
     """Xuất việc cho agent. parts > 1: chia thành nhiều phần liền mạch để nhiều agent dịch song song.
 
     Mỗi đoạn đã mang sẵn ngữ cảnh (mục, đoạn trước, thuật ngữ lần đầu), nên chia phần không làm mất ngữ cảnh.
+    figures: mô tả các hình đã xuất ảnh (figtext.export_images) để agent đọc chữ trong hình.
     """
     job_dir.mkdir(parents=True, exist_ok=True)
-    for old in list(job_dir.glob("segments*.jsonl")) + list(job_dir.glob("AGENT_TASK*.md")):
-        old.unlink()  # xoá file việc của lần xuất trước (giữ nguyên translations*.jsonl đã dịch)
+    old_files = ("segments*.jsonl", "AGENT_TASK*.md", "figures*.jsonl")
+    for old in [p for pattern in old_files for p in job_dir.glob(pattern)]:
+        old.unlink()  # xoá file việc của lần xuất trước (giữ nguyên translations*/figure_texts*.jsonl đã làm)
     parts = max(1, min(int(parts), len(segments) or 1))
     size = -(-len(segments) // parts) if segments else 0
+    chunks = [segments[k * size:(k + 1) * size] for k in range(parts)]
+    figure_parts = _split_figures(figures or [], chunks)
     rules = prompts.SYSTEM.split("Rules:", 1)[-1].strip()
     paths = []
-    for k in range(parts):
-        chunk = segments[k * size:(k + 1) * size]
+    for k, chunk in enumerate(chunks):
         suffix = "" if parts == 1 else f"_{k + 1}"
         seg_file, out_file = f"segments{suffix}.jsonl", f"translations{suffix}.jsonl"
         with open(job_dir / seg_file, "w", encoding="utf-8") as stream:
@@ -380,13 +412,27 @@ def export_agent_task(
                     "previous": s.previous[-300:], "terms": s.terms, "src": s.text,
                 }
                 stream.write(json.dumps(record, ensure_ascii=False) + "\n")
+        figs = figure_parts[k]
+        figure_section = figure_done = figure_count = ""
+        if figs:
+            fig_file, fig_out = f"figures{suffix}.jsonl", f"figure_texts{suffix}.jsonl"
+            with open(job_dir / fig_file, "w", encoding="utf-8") as stream:
+                for fig in figs:
+                    stream.write(json.dumps(fig, ensure_ascii=False) + "\n")
+            figure_section = FIGURE_SECTION.format(
+                image_dir=figtext.IMAGE_DIR, fig_file=fig_file, fig_out=fig_out, fig_count=len(figs),
+            )
+            figure_done = " (cả phần chữ trong hình bên dưới)"
+            figure_count = f"\n- Số hình cần đọc chữ: {len(figs)}"
+        files = "các file" if figs else "hai file"
         note = "" if parts == 1 else (
             f"\n> **Đây là phần {k + 1}/{parts}** (trang {chunk[0].page}–{chunk[-1].page}). "
-            "Các agent khác đang dịch các phần còn lại cùng lúc: chỉ đọc và ghi đúng hai file của phần này.\n"
+            f"Các agent khác đang dịch các phần còn lại cùng lúc: chỉ đọc và ghi đúng {files} của phần này.\n"
         )
         task = AGENT_TASK.format(
             rules=rules, source=source, scope=scope, count=len(chunk),
             seg_file=seg_file, out_file=out_file, part_note=note,
+            figure_section=figure_section, figure_done=figure_done, figure_count=figure_count,
         )
         path = job_dir / f"AGENT_TASK{suffix}.md"
         path.write_text(task, encoding="utf-8")

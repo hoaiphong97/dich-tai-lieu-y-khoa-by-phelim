@@ -53,6 +53,7 @@ DEFAULTS = {
     "bilingual_terms": True,  # lần đầu gặp thuật ngữ trong mục: "xương hàm dưới (mandible)"
     "keep_source": False,  # kèm bản gốc tiếng Anh dưới mỗi đoạn
     "detect_tables": True,
+    "figure_text": True,  # liệt kê chữ trong hình (Anh → Việt) dưới mỗi hình; chế độ agent: agent đọc chữ trong ảnh
     "output_pdf": True,  # PDF giữ bố cục, có hình
     "output_md": True,  # Markdown kèm thư mục hình
     "pdf_interleave": False,  # PDF xen kẽ trang gốc và trang dịch

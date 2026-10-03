@@ -18,3 +18,6 @@ App desktop (Windows/macOS) dịch PDF y khoa Anh → Việt ra Markdown. Python
 Người dùng sẽ đưa đường dẫn tới `AGENT_TASK.md` trong thư mục job. Đọc file đó và làm đúng theo hướng dẫn:
 đọc `segments.jsonl`, ghi `translations.jsonl` (`{"id", "dst"}` mỗi dòng), dịch theo lô và ghi nối tiếp.
 Giữ nguyên số liệu, đơn vị, viết tắt. Dùng đúng thuật ngữ trong trường `terms`. Không thêm hay bớt nội dung.
+Nếu task có mục "Chữ trong hình": dịch xong các đoạn thì mở từng ảnh trong `hinh-agent/` (danh sách ở `figures*.jsonl`),
+đọc chữ trong hình (bỏ chữ đã có trong `known`, chữ cái/số đánh dấu, số đo) và ghi `figure_texts*.jsonl`:
+`{"figure": "fig-0012", "items": [{"en": "...", "vi": "..."}]}` mỗi hình một dòng; hình không có chữ ghi `"items": []`.

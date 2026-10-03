@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pymupdf
 
+from . import figtext
 from .extract import MUPDF_LOCK, Block
 
 try:
@@ -194,10 +195,12 @@ def render_part(
     interleave: bool = False,
     placements: tuple | None = None,
     on_page=None,
+    notes: dict | None = None,
 ) -> dict:
     """Đặt bản dịch vào một lô trang và lưu thành một file PDF riêng.
 
     on_page(số trang gốc): gọi sau mỗi trang đặt chữ xong, để báo tiến độ.
+    notes: {số trang: [(khung hình, nội dung)]} — ghi chú "chữ trong hình" gắn vào góc mỗi hình.
     """
     placements_list, obstacles = placements or _placements(blocks, segments)
     wanted = set(pages)
@@ -232,6 +235,8 @@ def render_part(
                     others = [r for r in rects if r is not p.rect]
                     if _fit(page, p, others, archive) < 0.7:
                         shrunk += 1
+            if notes and notes.get(page_no):
+                figtext.add_notes(page, notes[page_no])
             if on_page:
                 on_page(page_no)
 
@@ -294,6 +299,7 @@ def render_pdf(
     interleave: bool = False,
     progress=None,
     batch_size: int | None = None,
+    notes: dict | None = None,
 ) -> dict:
     """Ghi PDF đã dịch chỉ gồm các trang trong `pages` (làm theo lô để tiết kiệm RAM)."""
     target = Path(target)
@@ -304,7 +310,9 @@ def render_pdf(
     try:
         for k, chunk in enumerate(batches(pages, batch_size)):
             part = work / f"part_{k:04d}.pdf"
-            stats = render_part(source, chunk, blocks, segments, part, interleave=interleave, placements=precomputed)
+            stats = render_part(
+                source, chunk, blocks, segments, part, interleave=interleave, placements=precomputed, notes=notes,
+            )
             parts.append(part)
             placed += stats["placed"]
             shrunk += stats["shrunk"]
@@ -361,7 +369,7 @@ def export_figures(
             counter[page_no] = counter.get(page_no, 0) + 1
             name = f"tr{page_no}-{counter[page_no]}.png"
             page = doc[page_index[page_no] if page_index else page_no - 1]
-            page.get_pixmap(dpi=dpi, clip=rect & page.rect).save(str(folder / name))
+            page.get_pixmap(dpi=dpi, clip=rect & page.rect, annots=False).save(str(folder / name))
             out[index] = name
             if progress:
                 progress(len(out), len(figures))

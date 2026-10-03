@@ -16,7 +16,7 @@ from pathlib import Path
 
 APP_NAME = "DichYKhoa"
 APP_TITLE = "Dịch Tài Liệu Y Khoa"
-APP_VERSION = "0.2.3"
+APP_VERSION = "0.2.4"
 
 
 def resource_root() -> Path:

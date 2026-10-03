@@ -134,11 +134,12 @@ async function refreshEngineStatus() {
 $("#engine-pill").addEventListener("click", () => (location.hash = "#/cai-dat"));
 
 /* ============================ Dịch tài liệu ============================ */
+function engineIsAgent() { return state.settings?.engine === "agent"; }
 function defaultOptions() {
   const s = state.settings;
   return {
     bilingual_terms: s.bilingual_terms, keep_source: s.keep_source, detect_tables: s.detect_tables,
-    output_pdf: s.output_pdf, output_md: s.output_md, pdf_interleave: s.pdf_interleave,
+    figure_text: s.figure_text, output_pdf: s.output_pdf, output_md: s.output_md, pdf_interleave: s.pdf_interleave,
   };
 }
 
@@ -271,6 +272,7 @@ function renderSetup() {
           ${toggle("bilingual_terms", "Ghi kèm thuật ngữ tiếng Anh", "Lần đầu gặp trong mỗi mục: “xương hàm dưới (mandible)”", o.bilingual_terms)}
           ${toggle("keep_source", "Kèm bản gốc dưới mỗi đoạn", "Tiện đối chiếu; file Markdown sẽ dài gấp đôi", o.keep_source)}
           ${toggle("detect_tables", "Nhận diện bảng", "Dịch từng ô bảng, giữ nguyên khung bảng", o.detect_tables)}
+          ${toggle("figure_text", "Liệt kê chữ trong hình", engineIsAgent() ? "Agent đọc chữ trong từng hình; danh sách Anh → Việt gắn dưới hình (Markdown) và ở góc hình (PDF)" : "Danh sách Anh → Việt gắn dưới hình (Markdown) và ở góc hình (PDF). Chữ nằm trong ảnh chỉ đọc được ở chế độ agent", o.figure_text)}
         </div>
         <div class="panel-body" style="border-top:1px solid var(--line);padding-top:8px;padding-bottom:8px">
           <div class="label" style="margin:6px 0 2px">File kết quả</div>
@@ -785,6 +787,7 @@ function renderSettings() {
             ${toggle("bilingual_terms", "Ghi kèm thuật ngữ tiếng Anh", "Lần đầu gặp trong mỗi mục: “xương hàm dưới (mandible)”", s.bilingual_terms)}
             ${toggle("keep_source", "Kèm bản gốc dưới mỗi đoạn", "Tiện đối chiếu khi học", s.keep_source)}
             ${toggle("detect_tables", "Nhận diện bảng", "Dịch từng ô bảng, giữ nguyên khung bảng", s.detect_tables)}
+            ${toggle("figure_text", "Liệt kê chữ trong hình", "Danh sách Anh → Việt dưới mỗi hình; ở chế độ agent, agent đọc cả chữ nằm trong ảnh", s.figure_text)}
             ${toggle("output_pdf", "Xuất PDF giữ bố cục, có hình", "Chữ Việt đặt vào đúng chỗ chữ gốc; hình giữ nguyên", s.output_pdf)}
             ${toggle("pdf_interleave", "Xen kẽ trang gốc trong PDF", "Mỗi trang dịch đi kèm trang gốc", s.pdf_interleave)}
             ${toggle("output_md", "Xuất Markdown kèm hình", "Hình được cắt ra thư mục riêng cạnh file .md", s.output_md)}
@@ -836,7 +839,7 @@ function renderSettings() {
     const v = { ...s };
     const key = $("#api_key");
     v.api_key = key ? key.value : "";
-    ["bilingual_terms", "keep_source", "detect_tables", "output_pdf", "output_md", "pdf_interleave"].forEach((n) => (v[n] = $(`[name="${n}"]`).checked));
+    ["bilingual_terms", "keep_source", "detect_tables", "figure_text", "output_pdf", "output_md", "pdf_interleave"].forEach((n) => (v[n] = $(`[name="${n}"]`).checked));
     v.output_dir = $("#output_dir").value;
     return v;
   };

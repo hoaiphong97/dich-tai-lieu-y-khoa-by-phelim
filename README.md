@@ -15,6 +15,7 @@ Chạy được hoàn toàn miễn phí trên máy (Ollama, LM Studio), hoặc q
   - **Dịch nhanh**: dán một đoạn văn, dịch ngay.
 - **PDF giữ bố cục, có hình**: chữ tiếng Việt được đặt vào đúng chỗ chữ gốc (tự co cỡ chữ cho vừa); hình ảnh, sơ đồ, nền màu, khung bảng giữ nguyên. Nhãn chữ trong sơ đồ cũng được dịch tại chỗ. Tuỳ chọn xen kẽ trang gốc để đối chiếu.
 - **Markdown kèm hình**: giữ tiêu đề, danh sách, chú thích và bảng; hình được cắt ra thư mục riêng (`hinh-<tên>/`, nhãn trong hình đã dịch). Bỏ header/footer và số trang; nối lại câu bị cắt qua cột hoặc qua trang.
+- **Chữ trong hình**: dưới mỗi hình có danh sách chữ trong hình kèm bản dịch (Anh → Việt). Trong Markdown, danh sách nằm ngay dưới ảnh; trong PDF, bấm biểu tượng ghi chú ở góc hình để xem. Nhãn mà PDF lưu dạng ký tự được app tự đọc; chữ nằm trong ảnh (hình vẽ, ảnh chụp) được **agent đọc** ở chế độ agent — app xuất ảnh từng hình để agent xem.
 - **So sánh trang**: xem trang gốc và trang dịch cạnh nhau ngay trong app — kể cả **trong lúc đang dịch**: lô trang nào dịch xong là xem được ngay.
 - **Sách dày, file nặng**: dịch và đặt chữ vào PDF chạy chồng lên nhau theo lô 25 trang, nên RAM thấp (đo trên file 258 MB / 400 trang: cả app dùng tối đa ~580 MB).
 - **Chạy song song**: nhiều luồng dịch trong cùng một job (ngữ cảnh và thuật ngữ được tính trước nên không bị lệch); chế độ agent chia việc cho nhiều agent dịch cùng lúc.
@@ -64,6 +65,7 @@ Cách chọn tốt nhất là dán cùng một đoạn vào **Dịch nhanh**, th
 ## Giới hạn hiện tại
 
 - **PDF scan (ảnh chụp)** chưa đọc được chữ, vì chưa có OCR. App sẽ báo các trang này.
+- Chữ nằm trong ảnh không được dịch tại chỗ (ảnh giữ nguyên); chỉ được liệt kê kèm bản dịch dưới hình, và chỉ ở chế độ agent.
 - Bố cục phức tạp (3 cột, hộp chữ đặt chồng lên nhau, bảng không có đường kẻ) có thể bị xếp sai thứ tự đoạn.
 - Trong PDF, chữ dùng font Noto Sans (không giữ font gốc của sách). Tiếng Việt thường dài hơn tiếng Anh nên chữ có thể nhỏ hơn bản gốc; khi quá chật, chữ được nới xuống khoảng trống bên dưới.
 - Header/footer lặp lại (tên sách, số trang) được giữ nguyên tiếng Anh trong PDF.
@@ -100,6 +102,7 @@ dichyk/
   extract.py     PDF → khối (tiêu đề, đoạn, danh sách, chú thích, bảng), thứ tự đọc 2 cột, bỏ header/footer
   pipeline.py    khối → đoạn cần dịch (ngữ cảnh, thuật ngữ) → bản dịch → Markdown; chế độ agent
   pdfout.py      đặt bản dịch vào PDF gốc (giữ hình), cắt hình cho Markdown, ảnh trang để so sánh
+  figtext.py     chữ trong hình: gom nhãn + chữ agent đọc từ ảnh → danh sách Anh → Việt dưới hình
   glossary.py    kho thuật ngữ TSV + bộ khớp (cụm dài nhất, số nhiều, viết tắt)
   engines.py     Ollama, API tương thích OpenAI
   prompts.py     prompt dịch

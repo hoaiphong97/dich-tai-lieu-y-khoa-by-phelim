@@ -179,6 +179,90 @@ def test_assemble_reports_page_progress_and_can_cancel(tmp_path, monkeypatch):
     assert not (job.dir / "pdf_parts").exists() and job.pdf_pages_ready == 0
 
 
+def _with_labelled_figure(tmp_path) -> str:
+    """Như trên, thêm một nhãn chữ dạng ký tự nằm trong hình."""
+    doc = pymupdf.open(_with_figure_and_background(tmp_path))
+    doc[2].insert_text((310, 360), "Condylar head", fontsize=8)
+    out = str(tmp_path / "book3.pdf")
+    doc.save(out)
+    return out
+
+
+def test_figure_text_listed_under_figure_and_as_pdf_note(tmp_path):
+    from dichyk import figtext
+
+    pdf = _with_labelled_figure(tmp_path)
+    blocks = extract.extract_blocks(pdf, [3])
+    assert any(b.kind == "label" and "Condylar" in b.text for b in blocks)
+    segments = pipeline.build_segments(blocks, None, bilingual=False)
+    pipeline.translate_segments(segments, FakeEngine(), None)
+    fig = next(i for i, b in enumerate(blocks) if b.kind == "figure")
+
+    agent = {fig: [("Articular disc", "Đĩa khớp"), ("condylar  head", "trùng"), ("A", ""), ("12 mm", "")]}
+    texts = figtext.collect(blocks, segments, agent)
+    assert [en for en, _ in texts[fig]] == ["Condylar head", "Articular disc"]  # bỏ trùng, bỏ nhãn A / số đo
+
+    md = pipeline.render_markdown(blocks, segments, title="t", figure_links={fig: "hinh/tr3-1.png"}, figure_texts=texts)
+    assert "![Hình — trang 3](hinh/tr3-1.png)\n\n> **Chữ trong hình**" in md  # ngay dưới hình
+    assert "> - Articular disc → Đĩa khớp" in md
+
+    out = tmp_path / "o.pdf"
+    pdfout.render_pdf(pdf, [3], blocks, segments, out, notes=figtext.pdf_notes(blocks, texts, [3]))
+    doc = pymupdf.open(out)
+    page = doc[0]  # giữ trang sống: annot trỏ vào trang, trang bị thu hồi thì PyMuPDF sập
+    annots = list(page.annots())
+    assert len(annots) == 1 and "Articular disc → Đĩa khớp" in annots[0].info["content"]
+    assert annots[0].info["title"] == "Chữ trong hình"
+    assert annots[0].rect.intersects(pymupdf.Rect(300, 300, 460, 420))  # gắn ở góc hình
+    # Hình cắt cho Markdown không dính biểu tượng ghi chú
+    names = pdfout.export_figures(out, blocks, tmp_path / "hinh", page_index={3: 0})
+    assert len(names) == 1
+
+
+def test_agent_reads_figure_text_and_assemble_lists_it(tmp_path, monkeypatch):
+    import json
+
+    from dichyk import figtext, jobs, settings
+
+    monkeypatch.setenv("DICHYK_DATA", str(tmp_path / "data"))
+    settings.save({"engine": "agent", "preset": "agent", "output_dir": str(tmp_path / "out")})
+    pdf = _with_labelled_figure(tmp_path)
+    manager = jobs.JobManager()
+    job = jobs.Job(type="pdf", file_path=pdf, file_name="book.pdf", pages_spec="3", scope="Trang 3")
+    manager._register(job)
+    manager._run(job)
+    assert job.status == "waiting_agent", job.error
+
+    figures = [json.loads(l) for l in (job.dir / "figures.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(figures) == 1 and figures[0]["known"] == ["Condylar head"]
+    assert (job.dir / figures[0]["image"]).stat().st_size > 100
+    task = (job.dir / "AGENT_TASK.md").read_text(encoding="utf-8")
+    assert "figure_texts.jsonl" in task and "Số hình cần đọc chữ: 1" in task
+
+    record = {"figure": figures[0]["figure"], "items": [{"en": "Articular disc", "vi": "Đĩa khớp"}]}
+    (job.dir / "figure_texts.jsonl").write_text(json.dumps(record, ensure_ascii=False) + "\n", encoding="utf-8")
+    texts, read = figtext.load_agent(job.dir)
+    assert read == {int(figures[0]["figure"].split("-")[1])}
+
+    manager._assemble(job)
+    assert job.status == "done", job.error
+    assert "hình agent chưa đọc chữ" not in job.phase
+    md = open(job.outputs["md"], encoding="utf-8").read()
+    assert "> **Chữ trong hình**" in md and "Articular disc → Đĩa khớp" in md and "Condylar head" in md
+    out = pymupdf.open(job.outputs["pdf"])
+    page = out[0]
+    contents = [a.info["content"] for a in page.annots()]
+    assert len(contents) == 1 and "Đĩa khớp" in contents[0]
+
+
+def test_agent_figures_split_with_parts():
+    segs = [pipeline.Segment(i, i, "para", "x", page) for i, page in enumerate([1, 1, 2, 3, 3, 4])]
+    figs = [{"figure": f"fig-{p}", "page": p} for p in (1, 2, 3, 4, 9)]
+    chunks = [segs[:3], segs[3:]]
+    split = pipeline._split_figures(figs, chunks)
+    assert [[f["page"] for f in part] for part in split] == [[1, 2], [3, 4, 9]]
+
+
 def test_agent_task_split_and_load(tmp_path):
     blocks = pipeline.text_to_blocks("First paragraph here.\n\nSecond one.\n\nThird one.\n\nFourth one.")
     segs = pipeline.build_segments(blocks, None, bilingual=False)
